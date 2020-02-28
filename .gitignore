@@ -3,6 +3,16 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# Pytorch Tensors and Models
+*.pt
+*.ptm
+
+# Numpy Data
+*.npz
+
+# Archives
+*.zip
+
 # C extensions
 *.so
 
