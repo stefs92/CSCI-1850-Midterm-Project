@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
+import matplotlib.pyplot as plt
 
 
 class ConvBlock(nn.Module):
@@ -65,6 +66,21 @@ class EnsembleModel(nn.Module):
         return mean_prediction
 
 
+def save_losses(losses, destination):
+    colors = ['red', 'blue', 'yellow', 'black', 'green', 'magenta', 'cyan']
+    markers = ['circle', 'square', 'star', 'plus', 'diamond', 'vline', 'hline']
+    losses = losses.view(losses.size(0), losses.size(1), -1)
+    torch.save(losses.detach(), destination+'.pt')
+    losses = losses.numpy()
+
+    for i in range(losses.shape[0]):
+        plt.plot(range(losses.shape[1]), losses[i, :, 0], color=colors[i], marker=markers[i], linestyle='solid')
+        if losses.shape[2] == 2:
+            plt.plot(range(losses.shape[1]), losses[i, :, 1], color=colors[i], marker=markers[i], linestyle='dashed')
+
+    plt.savefig(destination+'.png')
+    plt.clf()
+
 
 def build_model(args):
     return ConvolutionalModel().cuda()
@@ -94,8 +110,8 @@ def train(model, inputs, outputs, args):
 
     ''' K-fold Cross Validation'''
     hold_model = model
-    fold_final_eval_losses = torch.zeros(args.partitions)
-    fold_final_train_losses = torch.zeros(args.partitions)
+    cv_eval_losses = torch.zeros(args.partitions, args.epochs)
+    cv_train_losses = torch.zeros(args.partitions, args.epochs)
     fold_models = [copy.deepcopy(hold_model) for i in range(args.partitions)]
     fold_opts = [optim.Adam(model.parameters(), lr=args.learning_rate) for model in fold_models]
     mean_loss = 0
@@ -129,7 +145,7 @@ def train(model, inputs, outputs, args):
                 if batch_inputs.size(0) == 0:
                     continue
                 batch_losses = step(model, batch_inputs, batch_outputs, loss_f, opt)
-                train_losses[i_batch] = torch.mean(batch_losses).item()
+                train_losses[i_batch] = torch.mean(batch_losses).detach()
 
                 if args.loss_sampling:
                     with torch.no_grad():
@@ -159,15 +175,15 @@ def train(model, inputs, outputs, args):
                     sum_loss += eval_f(predictions, batch_outputs).item()
 
                 mean_loss = sum_loss / eval_inputs.size(0)
-                print('Fold %d, Epoch %d Mean Train / Eval Loss and R^2 Value: %.3f / %.3f / %.3f ' % (i_fold+1, i_epoch+1, torch.mean(train_losses), mean_loss, 1 - mean_loss / data_error), end='\r')
-        fold_final_eval_losses[i_fold] = mean_loss
-        fold_final_train_losses[i_fold] = torch.mean(train_losses).detach()
+                cv_train_losses[i_fold, i_epoch] = torch.mean(train_losses)
+                cv_eval_losses[i_fold, i_epoch] = mean_loss
+                print('Fold %d, Epoch %d Mean Train / Eval Loss and R^2 Value: %.3f / %.3f / %.3f ' % (i_fold+1, i_epoch+1, cv_train_losses[i_fold, i_epoch], cv_eval_losses[i_fold, i_epoch], 1 - mean_loss / data_error), end='\r')
         fold_models[i_fold] = model
         print('') # to keep only the final epoch losses from each fold
 
 
-    final_mean_eval_loss = torch.mean(fold_final_eval_losses)
-    final_mean_train_loss = torch.mean(fold_final_train_losses)
+    final_mean_eval_loss = torch.mean(cv_train_losses[:, -1])
+    final_mean_train_loss = torch.mean(cv_eval_losses[:, -1])
     print(('Mean Train / Eval Loss Across Folds at %d Epochs: %.3f / %.3f' % (args.epochs, final_mean_train_loss, final_mean_eval_loss))+' '*10)
 
     ''' Ensembling '''
@@ -187,12 +203,13 @@ def train(model, inputs, outputs, args):
             sum_loss[-1] += eval_f(predictions, batch_outputs).item()
 
         mean_loss = [sum_loss[i] / inputs.size(0) for i in range(args.partitions+1)]
-        print(('Eval Loss Of Ensemble Across Folds at %d Epochs: %s' % (args.epochs, str(mean_loss)))+' '*10)
+        print(('Loss Of Ensemble Across Folds at %d Epochs: %s' % (args.epochs, str(mean_loss)))+' '*10)
 
 
 
     ''' Training on All Data '''
     [model.train() for model in fold_models]
+    all_data_loss = torch.zeros(args.partitions, 1)
 
     n_batches = (inputs.size(0) // args.batch_size)+1
     if args.loss_sampling:
@@ -214,17 +231,19 @@ def train(model, inputs, outputs, args):
                 batch_outputs = train_outputs[batch_indices].cuda()
                 for i_model in range(len(fold_models)):
                     batch_losses = step(fold_models[i_model], batch_inputs, batch_outputs, loss_f, fold_opts[i_model])
-                    train_losses[i_model, i_batch] = torch.mean(batch_losses).item()
+                    train_losses[i_model, i_batch] = torch.mean(batch_losses).detach()
 
                 if args.loss_sampling:
                     with torch.no_grad():
                         logits[batch_indices] = batch_losses.cpu()
 
-            print('All Data Epoch %d Mean Train Loss: %s' % (i_epoch+1, str(torch.mean(train_losses, dim=1).numpy())), end='\r')
+            all_data_loss = torch.cat([all_data_loss, torch.mean(train_losses, dim=1)], dim=1)
+            print('All Data Epoch %d Mean Train Loss: %s' % (i_epoch+1, str(all_data_loss[:, -1].numpy())), end='\r')
     except Exception as e:
         pass
     finally:
-        return EnsembleModel(fold_models)
+        return EnsembleModel(fold_models), torch.stack([cv_train_losses, cv_eval_losses], dim=2).cpu(), all_data_loss.cpu()
+
 
 
 if __name__ == '__main__':
@@ -240,12 +259,17 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     try:
-        model = torch.load(args.model_path).cuda()
+        model = torch.load(args.model_path + '/model.ptm').cuda()
     except:
         model = build_model(args)
     inputs = torch.load('train_in.pt')
     outputs = torch.load('train_out.pt')
 
-    model = train(model, inputs, outputs, args)
+    os.makedirs(args.model_path, exist_ok=True)
 
-    torch.save(model.cpu(), args.model_path)
+    model, cvloss, adloss = train(model, inputs, outputs, args)
+
+    save_losses(cvloss, args.model_path+'/cross_validation_losses')
+    save_losses(adloss, args.model_path+'/all_data_losses')
+
+    torch.save(model.cpu(), args.model_path + '/model.ptm')
