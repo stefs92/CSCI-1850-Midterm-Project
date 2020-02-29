@@ -23,55 +23,6 @@ class ConvBlock(nn.Module):
             return F.leaky_relu(self.dropout(self.conv(inputs)))
 
 
-
-class HybridModel(nn.Module):
-    def __init__(self):
-        super(HybridModel, self).__init__()
-        self.conv1   = ConvBlock(5, 64, 3, batch_norm=True, dropout=.2, stride=2)
-        self.conv2   = ConvBlock(64, 64, 3, batch_norm=True, dropout=.2, stride=1)
-        self.conv3   = ConvBlock(64, 128, 3, batch_norm=True, dropout=.2, stride=2)
-        self.conv4   = ConvBlock(128, 128, 3, batch_norm=True, dropout=.2, stride=1)
-        self.layer = nn.TransformerEncoderLayer(128, 8, dropout=.2)
-        self.encoder = nn.TransformerEncoder(self.layer, 1)
-        self.linear1 = nn.Linear(2688, 1024)
-        self.linear2 = nn.Linear(1024, 512)
-        self.linear3 = nn.Linear(512, 1)
-        self.dropout = nn.Dropout(.5)
-
-    def forward(self, inputs):
-        '''
-        # Convolution
-        x = self.conv1(inputs)
-        x = self.conv2(x)
-        x = self.conv3(x)
-        x = self.conv4(x)
-        # Transformer
-        x = x.permute(2, 0, 1)
-        x = F.leaky_relu(self.encoder(x)).permute(1, 2, 0)
-        # MLP
-        x = x.reshape(x.size(0), -1)
-        x = F.leaky_relu(self.dropout(self.linear1(x)))
-        x = F.leaky_relu(self.dropout(self.linear2(x)))
-        x = self.linear3(x)
-        '''
-        x = torch.ones(inputs.size(0)).to(inputs) * -0.2724
-        return x
-
-class TransformerModel(nn.Module):
-    def __init__(self):
-        super(TransformerModel, self).__init__()
-        self.embedding = nn.Linear(5, 512)
-        self.layer = nn.TransformerEncoderLayer(512, 8)
-        self.encoder = nn.TransformerEncoder(self.layer, 2)
-        self.decoder = nn.Linear(512, 1)
-
-    def forward(self, inputs):
-        x = F.leaky_relu(self.embedding(inputs.permute(0, 2, 1)))
-        x = F.leaky_relu(self.encoder(x.permute(1, 0, 2))).permute(1, 2, 0)
-        x = self.decoder(x[:, :, 0])
-        return x
-
-
 class ConvolutionalModel(nn.Module):
     def __init__(self):
         super(ConvolutionalModel, self).__init__()
@@ -83,10 +34,7 @@ class ConvolutionalModel(nn.Module):
         self.conv6   = ConvBlock(256, 256, 3, batch_norm=True, dropout=.2, stride=1)
         self.conv7   = ConvBlock(256, 512, 3, batch_norm=True, dropout=.2, stride=2)
         self.conv8   = ConvBlock(512, 512, 3, batch_norm=True, dropout=.2, stride=1)
-        self.linear1 = nn.Linear(2688, 1024)
-        self.linear2 = nn.Linear(1024, 512)
         self.linear3 = nn.Linear(512, 1)
-        self.dropout = nn.Dropout(.5)
 
     def forward(self, inputs):
         # Convolution
@@ -100,8 +48,6 @@ class ConvolutionalModel(nn.Module):
         x = self.conv8(x)
         x = x.view(x.size(0), -1)
         # MLP
-        #x = F.leaky_relu(self.dropout(self.linear1(x)))
-        #x = F.leaky_relu(self.dropout(self.linear2(x)))
         x = self.linear3(x)
         return x
 
