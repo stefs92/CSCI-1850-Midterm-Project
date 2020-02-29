@@ -7,6 +7,9 @@ __pycache__/
 *.pt
 *.ptm
 
+# Images (loss graphs)
+*.png
+
 # Numpy Data
 *.npz
 
