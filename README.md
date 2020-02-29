@@ -1,5 +1,23 @@
 # CSCI-1850-Midterm-Project
 
+## How To Use
+
+### Getting The Data
+
+You can download the dataset at https://www.kaggle.com/c/gene-expression-prediction-cs1850/data. Extract only the train.npz and eval.npz files into the project directory, then run `python data_prep.py`.
+
+### Training a model
+
+First, run `python train.py -h` to see a list of available command line arguments and their descriptions.
+
+The model itself is harcoded in currently, so to make changes to it or define a new type of model you will have to go into the code directly.
+
+To continue training a saved model, simply put the path to the existing model as the model_path argument use the following command line arguments: `-partitions 1 -epochs 0`.
+
+### Generating a Submission
+
+To generate a Kaggle submission, run `python generate_submission [path to the model] [path/name of the new submission file]`.
+
 ## Model
 
 ### Current

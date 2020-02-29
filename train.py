@@ -169,7 +169,7 @@ def train(model, inputs, outputs, args):
         if args.loss_sampling:
             logits = torch.zeros(train_inputs.size(0))
         for i_epoch in range(args.epochs):
-            args.batch_size = int(args.batch_size * 1.01)
+            args.batch_size = int(args.batch_size * args.batch_size_annealing)
             model.train()
             train_inputs, train_outputs = shuffle_data(train_inputs, train_outputs)
             for i_batch in range(n_batches):
