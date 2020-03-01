@@ -1,5 +1,6 @@
 import argparse
 import copy
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -68,7 +69,7 @@ class EnsembleModel(nn.Module):
 
 def save_losses(losses, destination):
     colors = ['red', 'blue', 'yellow', 'black', 'green', 'magenta', 'cyan']
-    markers = ['circle', 'square', 'star', 'plus', 'diamond', 'vline', 'hline']
+    markers = ['o', 's', '*', '+', 'D', '|', '_']
     losses = losses.view(losses.size(0), losses.size(1), -1)
     torch.save(losses.detach(), destination+'.pt')
     losses = losses.numpy()
@@ -239,10 +240,10 @@ def train(model, inputs, outputs, args):
                     with torch.no_grad():
                         logits[batch_indices] = batch_losses.cpu()
 
-            all_data_loss = torch.cat([all_data_loss, torch.mean(train_losses, dim=1)], dim=1)
+            all_data_loss = torch.cat([all_data_loss, torch.mean(train_losses, dim=1).view(-1, 1)], dim=1)
             print('All Data Epoch %d Mean Train Loss: %s' % (i_epoch+1, str(all_data_loss[:, -1].numpy())), end='\r')
     except Exception as e:
-        pass
+        print(e)
     finally:
         return EnsembleModel(fold_models), torch.stack([cv_train_losses, cv_eval_losses], dim=2).cpu(), all_data_loss.cpu()
 
