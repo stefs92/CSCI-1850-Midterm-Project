@@ -123,6 +123,8 @@ def train(model, inputs, outputs, args):
         eval_outputs = outputs[i_fold*partition_size:(i_fold+1)*partition_size]
         train_inputs = torch.cat([inputs[:i_fold*partition_size], inputs[(i_fold+1)*partition_size:]])
         train_outputs = torch.cat([outputs[:i_fold*partition_size], outputs[(i_fold+1)*partition_size:]])
+        print(eval_inputs.size())
+        print(train_inputs.size())
         data_mean = torch.mean(eval_outputs).detach()
         data_error = eval_f(eval_outputs.detach(), torch.ones(eval_outputs.size(0))*data_mean).detach() / eval_outputs.size(0)
 
