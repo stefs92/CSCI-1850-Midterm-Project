@@ -99,13 +99,8 @@ def step(model, inputs, outputs, loss_f, opt):
     return loss
 
 
-def train(model, inputs, outputs, args):
+def train(model, inputs, outputs, test_inputs, test_outputs, args):
     bs = args.batch_size
-    inputs, outputs = shuffle_data(inputs, outputs)
-    test_inputs = inputs[:inputs.size(0)//100]
-    test_outputs = outputs[:outputs.size(0)//100]
-    inputs = inputs[inputs.size(0)//100:]
-    outputs = outputs[outputs.size(0)//100:]
     data_size = inputs.size(0)
     partition_size = data_size // args.partitions
     loss_f = nn.MSELoss(reduction='none')
@@ -177,28 +172,29 @@ def train(model, inputs, outputs, args):
         print('') # to keep only the final epoch losses from each fold
 
 
-    final_mean_eval_loss = torch.mean(cv_losses[:, -1, 1])
-    final_mean_train_loss = torch.mean(cv_losses[:, -1, 0])
-    print(('Mean Train / Eval Loss Across Folds at %d Epochs: %.3f / %.3f' % (args.epochs, final_mean_train_loss, final_mean_eval_loss))+' '*10)
+    if args.epochs > 0:
+        final_mean_eval_loss = torch.mean(cv_losses[:, -1, 1])
+        final_mean_train_loss = torch.mean(cv_losses[:, -1, 0])
+        print(('Mean Train / Eval Loss Across Folds at %d Epochs: %.3f / %.3f' % (args.epochs, final_mean_train_loss, final_mean_eval_loss))+' '*10)
 
-    ''' Ensembling '''
-    with torch.no_grad():
-        inputs, outputs = shuffle_data(inputs, outputs)
-        n_batches = (inputs.size(0) // args.batch_size)+1
-        sum_loss = [0]*(args.partitions+1)
+        ''' Ensembling '''
+        with torch.no_grad():
+            inputs, outputs = shuffle_data(inputs, outputs)
+            n_batches = (inputs.size(0) // args.batch_size)+1
+            sum_loss = [0]*(args.partitions+1)
 
-        for i_batch in range(n_batches):
-            batch_inputs = inputs[i_batch*args.batch_size:(i_batch+1)*args.batch_size].cuda()
-            batch_outputs = outputs[i_batch*args.batch_size:(i_batch+1)*args.batch_size].cuda()
-            if batch_inputs.size(0) == 0:
-                continue
-            predictions = torch.cat([model(batch_inputs).view(-1, 1) for model in fold_models], dim=1)
-            sum_loss[:-1] = [sum_loss[i] + eval_f(predictions[:,i], batch_outputs).item() for i in range(args.partitions)]
-            predictions = torch.mean(predictions, dim=1).view(-1)
-            sum_loss[-1] += eval_f(predictions, batch_outputs).item()
+            for i_batch in range(n_batches):
+                batch_inputs = inputs[i_batch*args.batch_size:(i_batch+1)*args.batch_size].cuda()
+                batch_outputs = outputs[i_batch*args.batch_size:(i_batch+1)*args.batch_size].cuda()
+                if batch_inputs.size(0) == 0:
+                    continue
+                predictions = torch.cat([model(batch_inputs).view(-1, 1) for model in fold_models], dim=1)
+                sum_loss[:-1] = [sum_loss[i] + eval_f(predictions[:,i], batch_outputs).item() for i in range(args.partitions)]
+                predictions = torch.mean(predictions, dim=1).view(-1)
+                sum_loss[-1] += eval_f(predictions, batch_outputs).item()
 
-        mean_loss = [sum_loss[i] / inputs.size(0) for i in range(args.partitions+1)]
-        print(('Loss Of Ensemble Over All Folds at %d Epochs: %s' % (args.epochs, str(mean_loss)))+' '*10)
+            mean_loss = [sum_loss[i] / inputs.size(0) for i in range(args.partitions+1)]
+            print(('Loss Of Ensemble Over All Folds at %d Epochs: %s' % (args.epochs, str(mean_loss)))+' '*10)
 
 
 
@@ -212,6 +208,7 @@ def train(model, inputs, outputs, args):
     data_mean = torch.mean(eval_outputs).detach()
     data_error = eval_f(eval_outputs.detach(), torch.ones(eval_outputs.size(0))*data_mean).detach() / eval_outputs.size(0)
 
+    n_batches = (train_inputs.size(0) // args.batch_size)+1
     train_losses = torch.zeros(args.partitions, n_batches)
 
     if args.loss_sampling:
@@ -237,7 +234,7 @@ def train(model, inputs, outputs, args):
                     continue
                 for i_model in range(args.partitions):
                     batch_losses = step(fold_models[i_model], batch_inputs, batch_outputs, loss_f, fold_opts[i_model])
-                    train_losses[i_model, i_batch] = torch.mean(batch_losses).detach()
+                    train_losses[i_model, i_batch] = torch.sum(batch_losses).detach()
 
                 if args.loss_sampling:
                     with torch.no_grad():
@@ -261,15 +258,13 @@ def train(model, inputs, outputs, args):
 
                 mean_loss = [sum_loss[i] / eval_inputs.size(0) for i in range(args.partitions)]
                 ad_losses = torch.cat([ad_losses, torch.zeros(args.partitions, 1, 2).to(ad_losses)], dim=1)
-                print(ad_losses[i_fold, -1, 0].shape)
-                print(torch.mean(train_losses, dim=1).shape)
-                ad_losses[:, -1, 0] = torch.mean(train_losses, dim=1)
+                ad_losses[:, -1, 0] = torch.sum(train_losses, dim=1) / train_inputs.size(0)
                 ad_losses[:, -1, 1] = torch.FloatTensor(mean_loss).to(ad_losses)
                 print('All Data Epoch %d Mean Train / Test Loss and R^2 Value: %s / %s / %s ' % (i_epoch, str(ad_losses[:, i_epoch, 0].cpu().numpy()), str(ad_losses[:, i_epoch, 1].cpu().numpy()), str([1 - mean_loss[i] / data_error for i in range(args.partitions)])), end='\r')
     except Exception:
         traceback.print_exc()
     finally:
-        return EnsembleModel(fold_models), cv_losses.cpu(), ad_losses[1:].cpu()
+        return EnsembleModel(fold_models), cv_losses.cpu(), ad_losses[:, 1:].cpu()
 
 
 if __name__ == '__main__':
@@ -288,14 +283,20 @@ if __name__ == '__main__':
         model = torch.load(args.model_path + '/model.ptm').cuda()
     except:
         model = build_model(args)
-    inputs = torch.load('train_in.pt')
-    outputs = torch.load('train_out.pt')
+    train_inputs = torch.load('train_in.pt')
+    train_outputs = torch.load('train_out.pt')
+    test_inputs = torch.load('test_in.pt')
+    test_outputs = torch.load('test_out.pt')
 
     os.makedirs(args.model_path, exist_ok=True)
 
-    model, cvloss, adloss = train(model, inputs, outputs, args)
+    model, cvloss, adloss = train(model, train_inputs, train_outputs, test_inputs, test_outputs, args)
 
-    save_losses(cvloss, args.model_path+'/cross_validation_losses')
+    try:
+        save_losses(cvloss, args.model_path+'/cross_validation_losses')
+    except RuntimeError:
+        pass
+
+    os.makedirs(args.model_path, exist_ok=True)
     save_losses(adloss, args.model_path+'/all_data_losses')
-
     torch.save(model.cpu(), args.model_path + '/model.ptm')

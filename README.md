@@ -14,6 +14,8 @@ The model itself is harcoded in currently, so to make changes to it or define a 
 
 To continue training a saved model, simply put the path to the existing model as the model_path argument use the following command line arguments: `-partitions 1 -epochs 0`.
 
+- Note: For prototyping and experimentation use `-partitions 1 -epochs 0` for fast training and evaluation, then for high-quality submissions use more partitions and epochs for a more robust (but far more expensive to train) ensemble.
+
 ### Generating a Submission
 
 To generate a Kaggle submission, run `python generate_submission [path to the model] [path/name of the new submission file]`.

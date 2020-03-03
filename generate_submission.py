@@ -36,7 +36,7 @@ if __name__ == '__main__':
 
     model = torch.load(args.model_path).cuda()
     model.eval()
-    inputs = torch.load('eval_in.pt').cuda()
+    inputs = torch.load('submission_in.pt').cuda()
     num_batches = (inputs.size(0) // args.batch_size) + 1
 
     with torch.no_grad():
