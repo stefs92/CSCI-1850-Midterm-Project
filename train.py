@@ -13,7 +13,7 @@ class ConvBlock(nn.Module):
     def __init__(self, *args, batch_norm=False, dropout=0, **kwargs):
         super(ConvBlock, self).__init__()
         self.conv = nn.Conv1d(*args, **kwargs)
-        self.dropout = nn.Dropout(dropout)
+        self.dropout = nn.Dropout2d(dropout)
         if batch_norm:
             self.batch_norm = nn.BatchNorm1d(args[1])
         else:
@@ -31,11 +31,11 @@ class ConvolutionalModel(nn.Module):
         super(ConvolutionalModel, self).__init__()
         self.conv1   = ConvBlock(5, 64, 3, batch_norm=True, dropout=.2, stride=2)
         self.conv2   = ConvBlock(64, 64, 3, batch_norm=True, dropout=.2, stride=1)
-        self.conv3   = ConvBlock(64, 128, 3, batch_norm=True, dropout=.2, stride=2)
-        self.conv4   = ConvBlock(128, 128, 3, batch_norm=True, dropout=.2, stride=1)
-        self.conv5   = ConvBlock(128, 256, 3, batch_norm=True, dropout=.2, stride=2)
-        self.conv6   = ConvBlock(256, 256, 3, batch_norm=True, dropout=.3, stride=1)
-        self.conv7   = ConvBlock(256, 512, 3, batch_norm=True, dropout=.4, stride=2)
+        self.conv3   = ConvBlock(64, 128, 3, batch_norm=True, dropout=.3, stride=2)
+        self.conv4   = ConvBlock(128, 128, 3, batch_norm=True, dropout=.3, stride=1)
+        self.conv5   = ConvBlock(128, 256, 3, batch_norm=True, dropout=.4, stride=2)
+        self.conv6   = ConvBlock(256, 256, 3, batch_norm=True, dropout=.4, stride=1)
+        self.conv7   = ConvBlock(256, 512, 3, batch_norm=True, dropout=.5, stride=2)
         self.conv8   = ConvBlock(512, 512, 3, batch_norm=True, dropout=.5, stride=1)
         self.conv9   = ConvBlock(512, 1, 1)
 
@@ -260,7 +260,7 @@ def train(model, inputs, outputs, test_inputs, test_outputs, args):
                 ad_losses = torch.cat([ad_losses, torch.zeros(args.partitions, 1, 2).to(ad_losses)], dim=1)
                 ad_losses[:, -1, 0] = torch.sum(train_losses, dim=1) / train_inputs.size(0)
                 ad_losses[:, -1, 1] = torch.FloatTensor(mean_loss).to(ad_losses)
-                print('All Data Epoch %d Mean Train / Test Loss and R^2 Value: %s / %s / %s ' % (i_epoch, str(ad_losses[:, i_epoch, 0].cpu().numpy()), str(ad_losses[:, i_epoch, 1].cpu().numpy()), str([1 - mean_loss[i] / data_error for i in range(args.partitions)])), end='\r')
+                print('All Data Epoch %d Mean Train Loss, Delta Test Loss, and R^2 Value: %s / %s / %s ' % (i_epoch, str(ad_losses[:, i_epoch, 0].cpu().numpy()), str((ad_losses[:, 1, 1] - ad_losses[:, i_epoch, 1]).cpu().numpy()), str([1 - mean_loss[i] / data_error for i in range(args.partitions)])), end='\r')
     except Exception:
         traceback.print_exc()
     finally:

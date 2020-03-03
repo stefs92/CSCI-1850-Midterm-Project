@@ -24,7 +24,7 @@ To generate a Kaggle submission, run `python generate_submission [path to the mo
 
 ### Current
 
-We are currently using an ensemble of fully-convolutional models with about 8 layers each. The convolutional blocks are based on those used by Codevilla et al (2018).
+We are currently using an ensemble of fully-convolutional models with 9 layers each. The convolutional blocks are based on those used by Codevilla et al (2018).
 
 ### History
 
