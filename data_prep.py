@@ -56,7 +56,7 @@ torch.save(torch.from_numpy(test_outputs), 'test_out.pt')
 print('Saving Complete.')
 
 
-## Eval Data ##
+## Submission Data ##
 
 # Load data
 print('Loading Submission Data...')
