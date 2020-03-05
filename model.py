@@ -32,17 +32,20 @@ class ConvolutionalModel(nn.Module):
         self.conv8   = ConvBlock(512, 512, 3, batch_norm=True, dropout=.5, stride=1)
         self.conv9   = ConvBlock(512, 1, 1)
 
-    def forward(self, inputs):
-        x = self.conv1(inputs)
-        x = self.conv2(x)
-        x = self.conv3(x)
-        x = self.conv4(x)
-        x = self.conv5(x)
-        x = self.conv6(x)
-        x = self.conv7(x)
-        x = self.conv8(x)
-        x = self.conv9(x)
-        return x.view(x.size(0), -1)
+    def forward(self, inputs, show=False):
+        x1 = self.conv1(inputs)
+        x2 = self.conv2(x1)
+        x3 = self.conv3(x2)
+        x4 = self.conv4(x3)
+        x5 = self.conv5(x4)
+        x6 = self.conv6(x5)
+        x7 = self.conv7(x6)
+        x8 = self.conv8(x7)
+        x9 = self.conv9(x8)
+        if show:
+            return x1, x2, x3, x4, x5, x6, x7, x8, x9
+        else:
+            return x9.view(x9.size(0), -1)
 
 
 class EnsembleModel(nn.Module):

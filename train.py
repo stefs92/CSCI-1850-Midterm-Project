@@ -246,7 +246,8 @@ def train(model, inputs, outputs, test_inputs, test_outputs, args):
     except Exception:
         traceback.print_exc()
     finally:
-        return EnsembleModel(fold_models), cv_losses.cpu(), ad_losses[:, 1:].cpu()
+        model = fold_models[0] if len(fold_models) == 1 else EnsembleModel(fold_models)
+        return model, cv_losses.cpu(), ad_losses[:, 1:].cpu()
 
 
 if __name__ == '__main__':
