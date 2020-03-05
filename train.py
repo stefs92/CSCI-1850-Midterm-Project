@@ -269,8 +269,8 @@ if __name__ == '__main__':
         model = build_model(args)
 
     # Load dataset
-    train_inputs = torch.load('train_in.pt')
-    train_outputs = torch.load('train_out.pt')
+    train_inputs = torch.load('resampled_in.pt')
+    train_outputs = torch.load('resampled_out.pt')
     test_inputs = torch.load('test_in.pt')
     test_outputs = torch.load('test_out.pt')
 
