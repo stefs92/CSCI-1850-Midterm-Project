@@ -314,17 +314,18 @@ if __name__ == '__main__':
     test_inputs = torch.load('test_in.pt')
     test_outputs = torch.load('test_out.pt')
 
-    norm_ins = copy.deepcopy(train_inputs)
-    for i in range(5):
-        norm_ins = norm_ins - torch.mean(norm_ins, dim=(0,2)).view(1, -1, 1)
-    norm_mean = torch.mean(norm_ins, dim=(0,2)).view(1, -1, 1)
-    norm_std = torch.std(train_inputs, dim=(0,2)).view(1, -1, 1)
-
     # Load or create model
     try:
         model = torch.load(args.model_path + '/model.ptm').cuda()
     except:
-        model = build_model(args, norm_means, norm_std)
+        norm_ins = copy.deepcopy(train_inputs)
+        norm_ins = (norm_ins - torch.mean(norm_ins, dim=0).view(1, 5, 100))
+        norm_ins = (norm_ins - torch.mean(norm_ins, dim=2).view(-1, 5, 1))
+        norm_ins = (norm_ins - torch.mean(norm_ins, dim=1).view(-1, 1, 100))
+        norm_mean = torch.mean(norm_ins, dim=(0,2)).view(1, -1, 1)
+        norm_std = torch.std(train_inputs, dim=(0,2)).view(1, -1, 1)
+
+        model = build_model(args, norm_mean, norm_std)
 
     # Create output directory if it doesn't exist
     os.makedirs(args.model_path, exist_ok=True)
