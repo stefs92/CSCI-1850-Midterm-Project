@@ -1,6 +1,7 @@
 import argparse
 import copy
 import os
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -10,6 +11,7 @@ from model import *
 
 
 def save_losses(losses, destination):
+    plt.clf()
     colors = ['red', 'blue', 'yellow', 'black', 'green', 'magenta', 'cyan']
     markers = ['o', 's', '*', '+', 'D', '|', '_']
     losses = losses.view(losses.size(0), losses.size(1), -1)
@@ -45,6 +47,23 @@ def step(model, inputs, outputs, loss_f, opt):
     return loss
 
 
+def build_resample_probs(outputs):
+    normal_ = torch.randn(outputs.size(0)) * torch.std(outputs) + torch.mean(outputs)
+    outputs_histogram = plt.hist(outputs, 1000, (-5, 5))
+    normal_histogram = plt.hist(normal_, 1000, (-5, 5))
+    new_histogram = normal_histogram[0] / (outputs_histogram[0] + 1e-6)
+    new_histogram = new_histogram / (np.sum(new_histogram * outputs_histogram[0]) * (10 / 1001))
+
+    truncated_outputs = outputs[outputs > -5]
+    truncated_outputs = truncated_outputs[truncated_outputs < 5]
+    probabilities = torch.zeros(truncated_outputs.shape)
+
+    for idx, edges in enumerate(np.stack([normal_histogram[1][:-1], normal_histogram[1][1:]], axis=1)):
+        probabilities[(truncated_outputs >= edges[0]) * (truncated_outputs <= edges[1])] = new_histogram[idx]
+
+    return probabilities
+
+
 def train(model, inputs, outputs, test_inputs, test_outputs, args):
     # Saved for resetting later
     bs = args.batch_size
@@ -67,99 +86,113 @@ def train(model, inputs, outputs, test_inputs, test_outputs, args):
 
     # Initialized here for scoping
     mean_loss = 0
-    for i_fold in range(args.partitions):
-        # Reset batch size for current model
-        args.batch_size = bs
-        model = fold_models[i_fold]
-        opt = fold_opts[i_fold]
+    # If args.epochs==0 then there's no value in performing evaluation or cross validation
+    if args.epochs > 0:
+        for i_fold in range(args.partitions):
+            # Reset batch size for current model
+            args.batch_size = bs
+            model = fold_models[i_fold]
+            opt = fold_opts[i_fold]
 
-        # Split inputs into training and eval (nearly along cell lines)
-        eval_inputs = inputs[i_fold*partition_size:(i_fold+1)*partition_size]
-        eval_outputs = outputs[i_fold*partition_size:(i_fold+1)*partition_size]
-        train_inputs = torch.cat([inputs[:i_fold*partition_size], inputs[(i_fold+1)*partition_size:]])
-        train_outputs = torch.cat([outputs[:i_fold*partition_size], outputs[(i_fold+1)*partition_size:]])
+            # Split inputs into training and eval (nearly along cell lines)
+            eval_inputs = inputs[i_fold*partition_size:(i_fold+1)*partition_size]
+            eval_outputs = outputs[i_fold*partition_size:(i_fold+1)*partition_size]
+            train_inputs = torch.cat([inputs[:i_fold*partition_size], inputs[(i_fold+1)*partition_size:]])
+            train_outputs = torch.cat([outputs[:i_fold*partition_size], outputs[(i_fold+1)*partition_size:]])
 
-        # Pre-calculate the mean of the eval data and from it the error for R^2
-        data_mean = torch.mean(eval_outputs).detach()
-        data_error = eval_f(eval_outputs.detach(), torch.ones(eval_outputs.size(0))*data_mean).detach() / eval_outputs.size(0)
+            # Resample train set to a normal distribution over targets
+            resample_probs = build_resample_probs(train_outputs)
+            resample_indices = torch.multinomial(resample_probs, train_outputs.size(0), replacement=True)
+            train_inputs = train_inputs[resample_indices]
+            train_outputs = train_outputs[resample_indices]
 
-        n_batches = (train_inputs.size(0) // args.batch_size)+1
-        train_losses = torch.zeros(n_batches)
+            # Pre-calculate the mean of the eval data and from it the error for R^2
+            data_mean = torch.mean(eval_outputs).detach()
+            data_error = eval_f(eval_outputs.detach(), torch.ones(eval_outputs.size(0))*data_mean).detach() / eval_outputs.size(0)
 
-        # Initialize logit tensor for loss-based importance sampling
-        if args.loss_sampling:
-            logits = torch.zeros(train_inputs.size(0))
+            n_batches = (train_inputs.size(0) // args.batch_size)+1
+            train_losses = torch.zeros(n_batches)
 
-        # Run train/eval loop over specified number of epochs
-        for i_epoch in range(args.epochs):
-            # Increase batch size according to specified schedule
-            args.batch_size = int(args.batch_size * args.batch_size_annealing)
+            # Initialize logit tensor for loss-based importance sampling
+            if args.loss_sampling:
+                logits = torch.zeros(train_inputs.size(0))
 
-            # Set model to training mode
-            model.train()
+            # Run train/eval loop over specified number of epochs
+            for i_epoch in range(args.epochs):
+                # Increase batch size according to specified schedule
+                args.batch_size = int(args.batch_size * args.batch_size_annealing)
 
-            # Shuffle training data so it is seen in a different order each epoch
-            if not args.loss_sampling:
-                train_inputs, train_outputs = shuffle_data(train_inputs, train_outputs)
+                # Set model to training mode
+                model.train()
 
-            # Batch training data
-            for i_batch in range(n_batches):
-                # Build batches
-                if args.loss_sampling and i_epoch > 0:
-                    batch_indices = torch.multinomial(logits, args.batch_size, replacement=True)
-                else:
-                    batch_indices = slice(i_batch*args.batch_size, (i_batch+1)*args.batch_size)
+                # Shuffle training data so it is seen in a different order each epoch
+                if not args.loss_sampling:
+                    train_inputs, train_outputs = shuffle_data(train_inputs, train_outputs)
 
-                batch_inputs = train_inputs[batch_indices].cuda()
-                batch_outputs = train_outputs[batch_indices].cuda()
-
-                # If the last batch is size 0, just skip it
-                if batch_inputs.size(0) == 0:
-                    continue
-
-                # Perform gradient update on batch
-                batch_losses = step(model, batch_inputs, batch_outputs, loss_f, opt)
-                train_losses[i_batch] = torch.mean(batch_losses).detach()
-
-                # If using loss sampling, update logits
-                if args.loss_sampling:
-                    with torch.no_grad():
-                        logits[batch_indices] = batch_losses.cpu()
-
-            # Don't need to track operations/gradients for evaluation
-            with torch.no_grad():
-                # Set model to evaluation mode (turn off dropout and stuff)
-                model.eval()
-
-                n_batches = (eval_inputs.size(0) // args.batch_size)+1
-                sum_loss = 0
-
-                # Batch the eval data
+                # Batch training data
                 for i_batch in range(n_batches):
-                    batch_inputs = eval_inputs[i_batch*args.batch_size:(i_batch+1)*args.batch_size].cuda()
-                    batch_outputs = eval_outputs[i_batch*args.batch_size:(i_batch+1)*args.batch_size].cuda()
+                    # Build batches
+                    if args.loss_sampling and i_epoch > 0:
+                        batch_indices = torch.multinomial(logits, args.batch_size, replacement=True)
+                    else:
+                        batch_indices = slice(i_batch*args.batch_size, (i_batch+1)*args.batch_size)
 
-                    # Same reasoning as training: sometimes encounter 0-size batches
+                    batch_inputs = train_inputs[batch_indices].cuda()
+                    batch_outputs = train_outputs[batch_indices].cuda()
+
+                    # If the last batch is size 0, just skip it
                     if batch_inputs.size(0) == 0:
                         continue
 
-                    # Build a sum of evaluation losses to average over later
-                    predictions = model(batch_inputs).view(-1)
-                    sum_loss += eval_f(predictions, batch_outputs).item()
+                    # Perform gradient update on batch
+                    batch_losses = step(model, batch_inputs, batch_outputs, loss_f, opt)
+                    train_losses[i_batch] = torch.mean(batch_losses).detach()
 
-                # Calculate and print mean train and eval loss over the epoch
-                mean_loss = sum_loss / eval_inputs.size(0)
-                cv_losses[i_fold, i_epoch, 0] = torch.mean(train_losses)
-                cv_losses[i_fold, i_epoch, 1] = mean_loss
-                print('Fold %d, Epoch %d Mean Train / Eval Loss and R^2 Value: %.3f / %.3f / %.3f ' % (i_fold+1, i_epoch+1, cv_losses[i_fold, i_epoch, 0], cv_losses[i_fold, i_epoch, 1], 1 - mean_loss / data_error), end='\r')
+                    # If using loss sampling, update logits
+                    if args.loss_sampling:
+                        with torch.no_grad():
+                            logits[batch_indices] = batch_losses.cpu()
 
-        # Put model back into list, probably not necessary but it's hard to know
-        # when python passes by value or reference
-        fold_models[i_fold] = model
-        print('') # to keep only the final epoch losses from each fold
+                # Don't need to track operations/gradients for evaluation
+                with torch.no_grad():
+                    # Set model to evaluation mode (turn off dropout and stuff)
+                    model.eval()
 
-    # If args.epochs==0 then there's no value in performing evaluation
-    if args.epochs > 0:
+                    n_batches = (eval_inputs.size(0) // args.batch_size)+1
+                    sum_loss = 0
+
+                    # Batch the eval data
+                    for i_batch in range(n_batches):
+                        batch_inputs = eval_inputs[i_batch*args.batch_size:(i_batch+1)*args.batch_size].cuda()
+                        batch_outputs = eval_outputs[i_batch*args.batch_size:(i_batch+1)*args.batch_size].cuda()
+
+                        # Same reasoning as training: sometimes encounter 0-size batches
+                        if batch_inputs.size(0) == 0:
+                            continue
+
+                        # Build a sum of evaluation losses to average over later
+                        predictions = model(batch_inputs).view(-1)
+                        sum_loss += eval_f(predictions, batch_outputs).item()
+
+                    # Calculate and print mean train and eval loss over the epoch
+                    mean_loss = sum_loss / eval_inputs.size(0)
+                    cv_losses[i_fold, i_epoch, 0] = torch.mean(train_losses)
+                    cv_losses[i_fold, i_epoch, 1] = mean_loss
+                    print('Fold %d, Epoch %d Mean Train / Eval Loss and R^2 Value: %.3f / %.3f / %.3f ' % (i_fold+1, i_epoch+1, cv_losses[i_fold, i_epoch, 0], cv_losses[i_fold, i_epoch, 1], 1 - (mean_loss / data_error).item()), end='\r')
+
+                if (i_epoch+1) % args.save_rate == 0:
+                    # Save loss curves
+                    try:
+                        save_losses(cv_losses[:i_fold+1].cpu(), args.model_path+'/cross_validation_losses')
+                    except RuntimeError:
+                        pass
+                    torch.save(model.cpu(), args.model_path + '/model_%d_%d.ptm' % (i_fold+1, i_epoch+1))
+                    model.cuda()
+            # Put model back into list, probably not necessary but it's hard to know
+            # when python passes by value or reference
+            fold_models[i_fold] = model
+            print('') # to keep only the final epoch losses from each fold
+
         ''' Ensemble and Individual Evaluation on All Non-Test Data '''
         with torch.no_grad():
             n_batches = (inputs.size(0) // args.batch_size)+1
@@ -188,6 +221,13 @@ def train(model, inputs, outputs, test_inputs, test_outputs, args):
     # See k-fold cross validation for comments on the specifics of all this stuff
     train_inputs = inputs
     train_outputs = outputs
+
+    # Resample train
+    resample_probs = build_resample_probs(train_outputs)
+    resample_indices = torch.multinomial(resample_probs, train_outputs.size(0), replacement=True)
+    train_inputs = train_inputs[resample_indices]
+    train_outputs = train_outputs[resample_indices]
+
     data_mean = torch.mean(test_outputs).detach()
     data_error = eval_f(test_outputs.detach(), torch.ones(test_outputs.size(0))*data_mean).detach() / test_outputs.size(0)
 
@@ -242,7 +282,12 @@ def train(model, inputs, outputs, test_inputs, test_outputs, args):
                 ad_losses = torch.cat([ad_losses, torch.zeros(args.partitions, 1, 2).to(ad_losses)], dim=1)
                 ad_losses[:, -1, 0] = torch.sum(train_losses, dim=1) / train_inputs.size(0)
                 ad_losses[:, -1, 1] = torch.FloatTensor(mean_loss).to(ad_losses)
-                print('All Data Epoch %d Mean Train Loss, Delta Test Loss, and R^2 Value: %s / %s / %s ' % (i_epoch, str(ad_losses[:, i_epoch, 0].cpu().numpy()), str((ad_losses[:, 1, 1] - ad_losses[:, i_epoch, 1]).cpu().numpy()), str([1 - mean_loss[i] / data_error for i in range(args.partitions)])), end='\r')
+                print('All Data Epoch %d Mean Train Loss, Test Loss, and R^2 Value: %s / %s / %s ' % (i_epoch, str(ad_losses[:, i_epoch, 0].cpu().numpy()), str(ad_losses[:, i_epoch, 1].cpu().numpy()), str([1 - (mean_loss[i] / data_error).item() for i in range(args.partitions)])), end='\r')
+            if i_epoch % args.save_rate == 0:
+                save_losses(ad_losses[:, 1:].cpu(), args.model_path+'/all_data_losses')
+                mm = fold_models[0] if len(fold_models) == 1 else EnsembleModel(fold_models)
+                torch.save(mm.cpu(), args.model_path + '/model_%d.ptm' % (i_epoch))
+                mm.cuda()
     except Exception:
         traceback.print_exc()
     finally:
@@ -259,26 +304,30 @@ if __name__ == '__main__':
     parser.add_argument('-epochs', type=int, default=25, help='Number of epochs to train for.')
     parser.add_argument('-learning_rate', type=float, default=1e-3, help='Learning rate.')
     parser.add_argument('-loss_sampling', default=False, action='store_true', dest='loss_sampling', help='Flag to use loss-based sampling in place of traditional batching.')
+    parser.add_argument('-save_rate', type=int, default=10, help='Save model and loss curves every ___ epochs.')
 
     args = parser.parse_args()
+
+    # Load dataset
+    train_inputs = torch.load('train_in.pt')
+    train_outputs = torch.load('train_out.pt')
+    test_inputs = torch.load('test_in.pt')
+    test_outputs = torch.load('test_out.pt')
+
+    norm_means = torch.mean(train_inputs, dim=(0,2)).view(1, -1, 1)
+    norm_std = torch.std(train_inputs, dim=(0,2)).view(1, -1, 1)
 
     # Load or create model
     try:
         model = torch.load(args.model_path + '/model.ptm').cuda()
     except:
-        model = build_model(args)
-
-    # Load dataset
-    train_inputs = torch.load('resampled_in.pt')
-    train_outputs = torch.load('resampled_out.pt')
-    test_inputs = torch.load('test_in.pt')
-    test_outputs = torch.load('test_out.pt')
-
-    # Train model on dataset
-    model, cvloss, adloss = train(model, train_inputs, train_outputs, test_inputs, test_outputs, args)
+        model = build_model(args, norm_means, norm_std)
 
     # Create output directory if it doesn't exist
     os.makedirs(args.model_path, exist_ok=True)
+
+    # Train model on dataset
+    model, cvloss, adloss = train(model, train_inputs, train_outputs, test_inputs, test_outputs, args)
 
     # Save loss curves
     try:

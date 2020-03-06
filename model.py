@@ -20,8 +20,11 @@ class ConvBlock(nn.Module):
 
 
 class ConvolutionalModel(nn.Module):
-    def __init__(self):
+    def __init__(self, norm_mean=0, norm_std=1):
         super(ConvolutionalModel, self).__init__()
+        self.norm_mean = norm_mean
+        self.norm_std = norm_std
+
         self.conv1   = ConvBlock(5, 64, 3, batch_norm=True, dropout=.2, stride=2)
         self.conv2   = ConvBlock(64, 64, 3, batch_norm=True, dropout=.2, stride=1)
         self.conv3   = ConvBlock(64, 128, 3, batch_norm=True, dropout=.3, stride=2)
@@ -33,7 +36,8 @@ class ConvolutionalModel(nn.Module):
         self.conv9   = ConvBlock(512, 1, 1)
 
     def forward(self, inputs, show=False):
-        x1 = self.conv1(inputs)
+        x0 = (inputs - self.norm_mean) / self.norm_std
+        x1 = self.conv1(x0)
         x2 = self.conv2(x1)
         x3 = self.conv3(x2)
         x4 = self.conv4(x3)
@@ -43,7 +47,7 @@ class ConvolutionalModel(nn.Module):
         x8 = self.conv8(x7)
         x9 = self.conv9(x8)
         if show:
-            return x1, x2, x3, x4, x5, x6, x7, x8, x9
+            return x0, x1, x2, x3, x4, x5, x6, x7, x8, x9
         else:
             return x9.view(x9.size(0), -1)
 

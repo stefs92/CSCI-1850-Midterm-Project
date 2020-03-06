@@ -29,20 +29,22 @@ def submit(predictions, title):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Generate a prediction over the eval set.')
     parser.add_argument('model_path', type=str, help='Relative path to the model used to generate predictions.')
-    parser.add_argument('submission_title', type=str, help='Title of the submission file (no file extension).')
     parser.add_argument('-batch_size', type=int, default=1024, help='Size of batches for model predictions.')
 
     args = parser.parse_args()
 
     model = torch.load(args.model_path).cuda()
     model.eval()
-    inputs = torch.load('submission_in.pt').cuda()
+
+    inputs = (torch.load('submission_in.pt').cuda() - norm_means) / norm_std
     num_batches = (inputs.size(0) // args.batch_size) + 1
 
     with torch.no_grad():
         predictions = [model(inputs[args.batch_size*i:args.batch_size*(i+1)]).cpu().squeeze() for i in range(num_batches)]
         predictions = torch.cat(predictions).numpy()
-        submit(predictions, args.submission_title)
+        model_name = args.model_path[args.model_path.find('/'):]
+        submission_title = 'submissions/' + args.model_path[:args.model_path.find('/')] + model_name[model_name.find('_'):]
+        submit(predictions, submission_title)
 
         mean = predictions.mean()
         var = predictions.std()
