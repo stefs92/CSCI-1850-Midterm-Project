@@ -314,7 +314,10 @@ if __name__ == '__main__':
     test_inputs = torch.load('test_in.pt')
     test_outputs = torch.load('test_out.pt')
 
-    norm_means = torch.mean(train_inputs, dim=(0,2)).view(1, -1, 1)
+    norm_ins = copy.deepcopy(train_inputs)
+    for i in range(5):
+        norm_ins = norm_ins - torch.mean(norm_ins, dim=(0,2)).view(1, -1, 1)
+    norm_mean = torch.mean(norm_ins, dim=(0,2)).view(1, -1, 1)
     norm_std = torch.std(train_inputs, dim=(0,2)).view(1, -1, 1)
 
     # Load or create model
