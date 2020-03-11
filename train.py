@@ -12,8 +12,12 @@ from model import *
 
 def save_losses(losses, destination):
     plt.clf()
-    colors = ['red', 'blue', 'yellow', 'black', 'green', 'magenta', 'cyan']
-    markers = ['o', 's', '*', '+', 'D', '|', '_']
+    if losses.shape[0] < 8:
+        colors = ['red', 'blue', 'yellow', 'black', 'green', 'magenta', 'cyan']
+        markers = ['o', 's', '*', '+', 'D', '|', '_']
+    else:
+        colors = ['black'] * losses.shape[0]
+        markers = [''] * losses.shape[0]
     losses = losses.view(losses.size(0), losses.size(1), -1)
     torch.save(losses.detach(), destination+'.pt')
     losses = losses.numpy()
@@ -27,8 +31,8 @@ def save_losses(losses, destination):
     plt.clf()
 
 
-def build_model(args):
-    return ConvolutionalModel().cuda()
+def build_model(args, norm_mean=0, norm_std=1):
+    return ConvolutionalModel(norm_mean, norm_std).cuda()
 
 
 def shuffle_data(*tensors):
@@ -95,10 +99,16 @@ def train(model, inputs, outputs, test_inputs, test_outputs, args):
             opt = fold_opts[i_fold]
 
             # Split inputs into training and eval (nearly along cell lines)
+            '''
             eval_inputs = inputs[i_fold*partition_size:(i_fold+1)*partition_size]
             eval_outputs = outputs[i_fold*partition_size:(i_fold+1)*partition_size]
             train_inputs = torch.cat([inputs[:i_fold*partition_size], inputs[(i_fold+1)*partition_size:]])
             train_outputs = torch.cat([outputs[:i_fold*partition_size], outputs[(i_fold+1)*partition_size:]])
+            '''
+            train_inputs = inputs[i_fold*partition_size:(i_fold+1)*partition_size]
+            train_outputs = outputs[i_fold*partition_size:(i_fold+1)*partition_size]
+            eval_inputs = torch.cat([inputs[:i_fold*partition_size], inputs[(i_fold+1)*partition_size:]])
+            eval_outputs = torch.cat([outputs[:i_fold*partition_size], outputs[(i_fold+1)*partition_size:]])
 
             # Resample train set to a normal distribution over targets
             resample_probs = build_resample_probs(train_outputs)
@@ -121,6 +131,7 @@ def train(model, inputs, outputs, test_inputs, test_outputs, args):
             for i_epoch in range(args.epochs):
                 # Increase batch size according to specified schedule
                 args.batch_size = int(args.batch_size * args.batch_size_annealing)
+                n_batches = (train_inputs.size(0) // args.batch_size)+1
 
                 # Set model to training mode
                 model.train()
@@ -318,14 +329,10 @@ if __name__ == '__main__':
     try:
         model = torch.load(args.model_path + '/model.ptm').cuda()
     except:
-        norm_ins = copy.deepcopy(train_inputs)
-        norm_ins = (norm_ins - torch.mean(norm_ins, dim=0).view(1, 5, 100))
-        norm_ins = (norm_ins - torch.mean(norm_ins, dim=2).view(-1, 5, 1))
-        norm_ins = (norm_ins - torch.mean(norm_ins, dim=1).view(-1, 1, 100))
-        norm_mean = torch.mean(norm_ins, dim=(0,2)).view(1, -1, 1)
-        norm_std = torch.std(train_inputs, dim=(0,2)).view(1, -1, 1)
+        norm_mean = torch.mean(train_inputs, dim=0).view(1, 5, 100).cuda()
+        norm_std = torch.std(train_inputs, dim=0).view(1, 5, 100).cuda()
 
-        model = build_model(args, norm_mean, norm_std)
+        model = build_model(args, norm_mean=norm_mean, norm_std=norm_std).cuda()
 
     # Create output directory if it doesn't exist
     os.makedirs(args.model_path, exist_ok=True)
@@ -338,7 +345,10 @@ if __name__ == '__main__':
         save_losses(cvloss, args.model_path+'/cross_validation_losses')
     except RuntimeError:
         pass
-    save_losses(adloss, args.model_path+'/all_data_losses')
+    try:
+        save_losses(adloss, args.model_path+'/all_data_losses')
+    except RuntimeError:
+        pass
 
     # Save model
     torch.save(model.cpu(), args.model_path + '/model.ptm')

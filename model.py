@@ -25,14 +25,14 @@ class ConvolutionalModel(nn.Module):
         self.norm_mean = norm_mean
         self.norm_std = norm_std
 
-        self.conv1   = ConvBlock(5, 64, 3, batch_norm=True, dropout=.2, stride=2)
-        self.conv2   = ConvBlock(64, 64, 3, batch_norm=True, dropout=.2, stride=1)
-        self.conv3   = ConvBlock(64, 128, 3, batch_norm=True, dropout=.3, stride=2)
-        self.conv4   = ConvBlock(128, 128, 3, batch_norm=True, dropout=.3, stride=1)
-        self.conv5   = ConvBlock(128, 256, 3, batch_norm=True, dropout=.4, stride=2)
-        self.conv6   = ConvBlock(256, 256, 3, batch_norm=True, dropout=.4, stride=1)
-        self.conv7   = ConvBlock(256, 512, 3, batch_norm=True, dropout=.5, stride=2)
-        self.conv8   = ConvBlock(512, 512, 3, batch_norm=True, dropout=.5, stride=1)
+        self.conv1   = ConvBlock(5, 64, 3, batch_norm=True, dropout=.1, stride=2)
+        self.conv2   = ConvBlock(64, 64, 3, batch_norm=True, dropout=.1, stride=1)
+        self.conv3   = ConvBlock(64, 128, 3, batch_norm=True, dropout=.2, stride=2)
+        self.conv4   = ConvBlock(128, 128, 3, batch_norm=True, dropout=.2, stride=1)
+        self.conv5   = ConvBlock(128, 256, 3, batch_norm=True, dropout=.3, stride=2)
+        self.conv6   = ConvBlock(256, 256, 3, batch_norm=True, dropout=.3, stride=1)
+        self.conv7   = ConvBlock(256, 512, 3, batch_norm=True, dropout=.4, stride=2)
+        self.conv8   = ConvBlock(512, 512, 3, batch_norm=True, dropout=.4, stride=1)
         self.conv9   = ConvBlock(512, 1, 1)
 
     def forward(self, inputs, show=False):

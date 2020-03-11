@@ -36,13 +36,13 @@ if __name__ == '__main__':
     model = torch.load(args.model_path).cuda()
     model.eval()
 
-    inputs = (torch.load('submission_in.pt').cuda() - norm_means) / norm_std
+    inputs = torch.load('submission_in.pt').cuda()
     num_batches = (inputs.size(0) // args.batch_size) + 1
 
     with torch.no_grad():
         predictions = [model(inputs[args.batch_size*i:args.batch_size*(i+1)]).cpu().squeeze() for i in range(num_batches)]
         predictions = torch.cat(predictions).numpy()
-        model_name = args.model_path[args.model_path.find('/'):]
+        model_name = args.model_path[args.model_path.find('/'):args.model_path.rfind('.')]
         submission_title = 'submissions/' + args.model_path[:args.model_path.find('/')] + model_name[model_name.find('_'):]
         submit(predictions, submission_title)
 
