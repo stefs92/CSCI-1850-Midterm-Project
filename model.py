@@ -65,6 +65,9 @@ class EnsembleModel(nn.Module):
     def __init__(self, models):
         super(EnsembleModel, self).__init__()
         self.classifier = None
+        print(models[-1])
+        print(type(models[-1]))
+        print(isinstance(models[-1], ClassificationModel))
         if isinstance(models[-1], ClassificationModel):
             self.models = nn.ModuleList(models[:-1])
             self.classifier = models[-1]
@@ -76,7 +79,7 @@ class EnsembleModel(nn.Module):
         shape = predictions[0].shape
         predictions = torch.cat([pred.view(shape[0], -1, 1) for pred in predictions], dim=2)
         if self.classifier is not None:
-            weights = self.classifier(inputs).unsqueeze(1)
+            weights = F.softmax(self.classifier(inputs), dim=1).unsqueeze(1)
             mean_prediction = torch.sum(predictions * weights, dim=2).view(shape)
         else:
             mean_prediction = torch.mean(predictions, dim=2).view(shape)
@@ -88,12 +91,12 @@ class ClassificationModel(Model):
         super(ClassificationModel, self).__init__(norm_mean, norm_std)
         self.conv_stack = ConvolutionalModel(norm_mean, norm_std, n_classes)
 
-    def forward(self, inputs, show=False):
+    def forward(self, inputs, show=False, eval=False):
         activations = self.conv_stack(inputs, show)
         if show:
-            activations[-1] = F.softmax(activations[-1], dim=1)
+            activations[-1] = activations[-1]
         else:
-            activations = F.softmax(activations, dim=1)
+            activations = activations
         return activations
 
 
