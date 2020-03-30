@@ -65,9 +65,6 @@ class EnsembleModel(nn.Module):
     def __init__(self, models):
         super(EnsembleModel, self).__init__()
         self.classifier = None
-        print(models[-1])
-        print(type(models[-1]))
-        print(isinstance(models[-1], ClassificationModel))
         if isinstance(models[-1], ClassificationModel):
             self.models = nn.ModuleList(models[:-1])
             self.classifier = models[-1]
