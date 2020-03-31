@@ -74,7 +74,7 @@ def shuffle_data(*tensors):
 Performs a single gradient update and returns losses
 '''
 def step(model, inputs, outputs, loss_f, opt):
-    predictions = torch.sigmoid(model(inputs))#model(inputs)#
+    predictions = model(inputs)#torch.sigmoid(model(inputs))#
     loss = loss_f(predictions.squeeze(), outputs.squeeze())
     torch.mean(loss).backward()
     opt.step()
@@ -115,6 +115,9 @@ def train_model(model, inputs, outputs, partition, loss_f, eval_f, opt, epochs, 
         train_outputs = reverse_outputs
         eval_inputs = partition_inputs
         eval_outputs = partition_outputs
+
+    print(train_inputs.size())
+    print(eval_inputs.size())
 
     # Resample train set to a normal distribution over targets
     if isinstance(outputs, torch.FloatTensor):
@@ -320,14 +323,14 @@ def cross_validation(models, inputs, outputs, test_inputs, test_outputs, loss_f,
 
         # Convert to labels
         #train_outputs = train_outputs * -1 * 10
-        #train_outputs = train_outputs.argmin(dim=1)
-        train_outputs = (train_outputs < 0.1).float()
+        train_outputs = train_outputs.argmin(dim=1)
+        #train_outputs = (train_outputs < 0.1).float()
         print(train_outputs.mean(dim=1))
 
     model = fold_models[-1]
     opt = fold_opts[-1]
     print('Training Classifier:')
-    model, losses = train_model(model, train_inputs, train_outputs, partition, nn.BCELoss(reduction='none'), nn.BCELoss(reduction='sum'), opt, epochs[-1], args, 'classifier')#nn.CrossEntropyLoss(reduction='none'), nn.CrossEntropyLoss(reduction='sum'), opt, epochs[-1], args, 'classifier')
+    model, losses = train_model(model, train_inputs, train_outputs, partition, nn.CrossEntropyLoss(reduction='none'), nn.CrossEntropyLoss(reduction='sum'), opt, epochs[-1], args, 'classifier')#nn.CrossEntropyLoss(reduction='none'), nn.CrossEntropyLoss(reduction='sum'), opt, epochs[-1], args, 'classifier')
     try:
         save_losses(losses.unsqueeze(0).cpu(), args.model_path+'/classifier_losses')
     except RuntimeError:
@@ -404,7 +407,7 @@ if __name__ == '__main__':
     try:
         args = pickle.load(open(args.model_path + '/args.pkl', 'rb'))
     except:
-        pass
+        print(args)
 
 
     # Load dataset
