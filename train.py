@@ -116,9 +116,6 @@ def train_model(model, inputs, outputs, partition, loss_f, eval_f, opt, epochs, 
         eval_inputs = partition_inputs
         eval_outputs = partition_outputs
 
-    print(train_inputs.size())
-    print(eval_inputs.size())
-
     # Resample train set to a normal distribution over targets
     if isinstance(outputs, torch.FloatTensor):
         resample_probs = build_resample_probs(train_outputs)
@@ -407,7 +404,8 @@ if __name__ == '__main__':
     try:
         args = pickle.load(open(args.model_path + '/args.pkl', 'rb'))
     except:
-        print(args)
+        pass
+    print(args)
 
 
     # Load dataset
