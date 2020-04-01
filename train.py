@@ -322,7 +322,7 @@ def cross_validation(models, inputs, outputs, test_inputs, test_outputs, loss_f,
         #train_outputs = train_outputs * -1 * 10
         train_outputs = train_outputs.argmin(dim=1)
         #train_outputs = (train_outputs < 0.1).float()
-        print(train_outputs.mean(dim=1))
+        #print(train_outputs.mean(dim=1))
 
     model = fold_models[-1]
     opt = fold_opts[-1]
@@ -375,7 +375,7 @@ def cross_validation(models, inputs, outputs, test_inputs, test_outputs, loss_f,
             predictions = torch.sum(predictions * weights, dim=1)
             sum_loss[-1] += eval_f(predictions, batch_outputs).item()
 
-        mean_loss = [sum_loss[i] / inputs.size(0) for i in range(args.partitions+1)]
+        mean_loss = [sum_loss[i] / test_inputs.size(0) for i in range(args.partitions+1)]
         print(('Loss Of Ensemble Over Test Data at %d Epochs: %s' % (args.epochs, str(mean_loss)))+' '*10)
 
     return EnsembleModel(fold_models), cv_losses
@@ -424,8 +424,9 @@ if __name__ == '__main__':
             models[i] = torch.load(path).cuda()
         except:
             pass
+    print('===================')
     try:
-        path = glob(args.model_path + '/classifier_*.ptm' % (i+1))[0]
+        path = glob(args.model_path + '/classifier_*.ptm')[0]
         epochs[-1] = int(path[path.rfind('_')+1:path.rfind('.')])
         models[-1] = torch.load(path).cuda()
     except:
