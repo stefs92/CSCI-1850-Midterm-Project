@@ -24,7 +24,6 @@ def save_model(model, opt, path):
     model.cuda()
 
 
-
 def save_losses(losses, destination):
     try:
         old_losses = torch.load(glob(destination+'.pt')[0])[:losses.size(0), :losses.size(1)]
@@ -502,6 +501,13 @@ if __name__ == '__main__':
 
     if args.save_rate > args.epochs:
         args.save_rate = args.epochs
+
+    try:
+        args = pickle.load(open(args.model_path + '/args.pkl', 'rb'))
+    except:
+        pass
+    print(args)
+
 
     # Load dataset
     print('Loading data...')
