@@ -1,3 +1,5 @@
+seq_data.csv
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -6,6 +8,7 @@ __pycache__/
 # Pytorch Tensors and Models
 *.pt
 *.ptm
+*.pkl
 
 # Images (loss graphs)
 *.png

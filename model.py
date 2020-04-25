@@ -3,12 +3,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-
 class Model(nn.Module):
-    def __init__(self, norm_mean=0, norm_std=1):
+    def __init__(self, norm_mean=0.0, norm_std=1.0):
         super(Model, self).__init__()
-        self.register_buffer('norm_mean', norm_mean)
-        self.register_buffer('norm_std', norm_std)
+        if isinstance(norm_mean, float):
+            self.register_buffer('norm_mean', torch.FloatTensor([norm_mean]))
+            self.register_buffer('norm_std', torch.FloatTensor([norm_std]))
+        else:
+            self.register_buffer('norm_mean', norm_mean)
+            self.register_buffer('norm_std', norm_std)
 
     def norm(self, values):
         return (values - self.norm_mean) / self.norm_std
@@ -32,19 +35,19 @@ class ConvBlock(nn.Module):
 
 
 class ConvolutionalModel(Model):
-    def __init__(self, norm_mean=0, norm_std=1, n_outs=1):
+    def __init__(self, norm_mean=0.0, norm_std=1.0, n_outs=1, in_size=15):
         super(ConvolutionalModel, self).__init__(norm_mean, norm_std)
-        self.conv1   = ConvBlock(5, 64, 3, batch_norm=True, dropout=.1, stride=2)
-        self.conv2   = ConvBlock(64, 64, 3, batch_norm=True, dropout=.1, stride=1)
+        self.conv1   = ConvBlock(in_size, 64, 3, batch_norm=True, dropout=.2, stride=2)
+        self.conv2   = ConvBlock(64, 64, 3, batch_norm=True, dropout=.2, stride=1)
         self.conv3   = ConvBlock(64, 128, 3, batch_norm=True, dropout=.2, stride=2)
         self.conv4   = ConvBlock(128, 128, 3, batch_norm=True, dropout=.2, stride=1)
-        self.conv5   = ConvBlock(128, 256, 3, batch_norm=True, dropout=.3, stride=2)
-        self.conv6   = ConvBlock(256, 256, 3, batch_norm=True, dropout=.3, stride=1)
-        self.conv7   = ConvBlock(256, 512, 3, batch_norm=True, dropout=.4, stride=2)
-        self.conv8   = ConvBlock(512, 512, 3, batch_norm=True, dropout=.4, stride=1)
+        self.conv5   = ConvBlock(128, 256, 3, batch_norm=True, dropout=.2, stride=2)
+        self.conv6   = ConvBlock(256, 256, 3, batch_norm=True, dropout=.2, stride=1)
+        self.conv7   = ConvBlock(256, 512, 3, batch_norm=True, dropout=.2, stride=2)
+        self.conv8   = ConvBlock(512, 512, 3, batch_norm=True, dropout=.2, stride=1)
         self.conv9   = ConvBlock(512, n_outs, 1)
 
-    def forward(self, inputs, show=False, eval=False):
+    def forward(self, inputs, show=False, eval=False, use_classifier=False):
         x0 = self.norm(inputs)
         x1 = self.conv1(x0)
         x2 = self.conv2(x1)
@@ -65,20 +68,17 @@ class EnsembleModel(nn.Module):
     def __init__(self, models):
         super(EnsembleModel, self).__init__()
         self.classifier = None
-        print(models[-1])
-        print(type(models[-1]))
-        print(isinstance(models[-1], ClassificationModel))
         if isinstance(models[-1], ClassificationModel):
             self.models = nn.ModuleList(models[:-1])
             self.classifier = models[-1]
         else:
             self.models = nn.ModuleList(models)
 
-    def forward(self, inputs):
+    def forward(self, inputs, use_classifier=True):
         predictions = [model(inputs, eval=True) for model in self.models]
         shape = predictions[0].shape
         predictions = torch.cat([pred.view(shape[0], -1, 1) for pred in predictions], dim=2)
-        if self.classifier is not None:
+        if self.classifier is not None and use_classifier:
             weights = F.softmax(self.classifier(inputs), dim=1).unsqueeze(1)
             mean_prediction = torch.sum(predictions * weights, dim=2).view(shape)
         else:
@@ -87,9 +87,9 @@ class EnsembleModel(nn.Module):
 
 
 class ClassificationModel(Model):
-    def __init__(self, norm_mean=0, norm_std=1, n_classes=48):
+    def __init__(self, norm_mean=0.0, norm_std=1.0, n_classes=48):
         super(ClassificationModel, self).__init__(norm_mean, norm_std)
-        self.conv_stack = ConvolutionalModel(norm_mean, norm_std, n_classes)
+        self.conv_stack = ConvolutionalModel(norm_mean, norm_std, n_classes, 15)
 
     def forward(self, inputs, show=False, eval=False):
         activations = self.conv_stack(inputs, show)
@@ -101,7 +101,7 @@ class ClassificationModel(Model):
 
 
 class FactoredModel(Model):
-    def __init__(self, norm_mean=0, norm_std=1):
+    def __init__(self, norm_mean=0.0, norm_std=1.0):
         super(FactoredModel, self).__init__(norm_mean, norm_std)
         self.conv_stack = ConvolutionalModel(norm_mean, norm_std, 2)
 
