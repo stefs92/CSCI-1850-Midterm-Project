@@ -64,6 +64,21 @@ class ConvolutionalModel(Model):
             return x9
 
 
+class SeqModel(nn.Module):
+    def __init__(self, n_outs=1, embed_size=32, seq_size=256, in_size=15):
+        self.embed = nn.Embedding(num_embeddings=5, embedding_dim=embed_size)
+        self.seq_module = ConvolutionalModel(n_outs=seq_size, in_size=embed_size)
+        self.prediction_module = ConvolutionalModel(n_outs=n_outs, in_size=in_size+seq_size)
+
+    def forward(self, inputs, show=False, eval=False, use_classifier=False):
+        seq_in, hm_in = inputs
+        seq_embed = self.embed(seq_in).permute(0, 2, 1)
+        seq_out = self.seq_module(seq_in).view(-1, self.seq_size, 100)
+        pred_in = torch.cat([seq_out, hm_in], dim=1)
+        pred_out = self.prediction_module(pred_in)
+        return pred_out
+
+
 class EnsembleModel(nn.Module):
     def __init__(self, models):
         super(EnsembleModel, self).__init__()
