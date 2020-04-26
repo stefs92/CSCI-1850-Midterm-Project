@@ -19,33 +19,29 @@ def extract_data(cell_data, sequence_labels, sequence_data):
     mean_data = np.concatenate(mean_data, axis=0)
     std_data = [np.expand_dims(hm_data.std(axis=0), 0)]*hm_data.shape[0]
     std_data = np.concatenate(std_data, axis=0)
-    input_hm = np.concatenate([hm_data, mean_data, std_data], axis=2)
-
-    # Seq data
-    gene_ids = cell_data[:, 0, 0]
-    seq_inds = np.nonzero(gene_ids == seq_labels)[0]
-    input_seq = sequence_data[seq_inds]
+    input_hm = np.concatenate([cell_data[:,:,:1], hm_data, mean_data, std_data], axis=2)
 
     # Expression data
     try:
         output_data = cell_data[:,0,6]
     except:
         output_data = None
-    return input_seq, input_hm, output_data
+    return input_hm, output_data
 
 
-def save_tensors(seq, hm, out, name):
+def save_tensors(hm, out, name, augment=True):
     hm = torch.from_numpy(hm).permute(0, 2, 1)
     if args.threshold > 0:
         hm[hm < args.threshold] = 0
-    if args.noise > 0:
+    if args.noise > 0 and augment:
         hm = hm + torch.randn_like(hm) * args.noise
     with torch.no_grad():
         for i in range(args.smooth):
             hm = smooth(hm)
 
-    torch.save((torch.from_numpy(seq), hm), args.destination + '/%s_in.pt' % name)
-    torch.save(torch.from_numpy(out), args.destination + '/%s_out.pt' % name)
+    torch.save(hm, args.destination + '/%s_in.pt' % name)
+    if out is not None:
+        torch.save(torch.from_numpy(out), args.destination + '/%s_out.pt' % name)
 
 
 if __name__ == '__main__':
@@ -59,9 +55,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     seq_data = np.genfromtxt('seq_data.csv', delimiter=',', dtype=None)
-    seq_labels = np.array([x[0] for x in seq_data]).reshape(-1, 1)
+    seq_labels = torch.LongTensor([x[0] for x in seq_data]).view(-1, 1)
     sequences = [x[1].decode('utf-8') for x in seq_data]
-    sequences = np.array([[seq_dict[c] for c in x] for x in sequences], dtype=np.int8)
+    sequences = torch.LongTensor([[seq_dict[c] for c in x] for x in sequences])
 
     # Translate from integer counts to normalized scale used by dataset
     args.threshold = torch.log(torch.FloatTensor([args.threshold + 1]))
@@ -78,6 +74,7 @@ if __name__ == '__main__':
 
     # Create destination, only if it does not exist
     os.makedirs(args.destination)
+    torch.save(torch.cat([seq_labels, sequences], dim=1), args.destination + '/sequences.pt')
 
     # shuffle cells
     i_shuffle = torch.randperm(len(train_cells))
@@ -97,38 +94,31 @@ if __name__ == '__main__':
     split_index = -1 * args.n_test
     for cell in train_cells[:split_index]:
         cell_data = train_data[cell]
-        seq_data, hm_data, exp_values = extract_data(cell_data[:-1000], seq_labels, sequences)
-        train_seq.append(seq_data)
+        hm_data, exp_values = extract_data(cell_data[:-1000], seq_labels, sequences)
         train_hm.append(hm_data)
         train_outputs.append(exp_values)
-        seq_data, hm_data, exp_values = extract_data(cell_data[-1000:], seq_labels, sequences)
-        test_seq.append(seq_data)
+        hm_data, exp_values = extract_data(cell_data[-1000:], seq_labels, sequences)
         test_hm.append(hm_data)
         test_outputs.append(exp_values)
     for cell in train_cells[split_index:]:
         cell_data = train_data[cell]
-        seq_data, hm_data, exp_values = extract_data(cell_data, seq_labels, sequences)
-        test_seq.append(seq_data)
+        hm_data, exp_values = extract_data(cell_data, seq_labels, sequences)
         test_hm.append(hm_data)
         test_outputs.append(exp_values)
 
-    train_seq = np.concatenate(train_seq, axis=0)
     train_hm = np.concatenate(train_hm, axis=0)
     train_outputs = np.concatenate(train_outputs, axis=0)
-    print('Training sequences shape: %s' % str(train_seq.shape))
     print('Training histones shape: %s' % str(train_hm.shape))
     print('Training outputs shape: %s' % str(train_outputs.shape))
-    test_seq = np.concatenate(test_seq, axis=0)
     test_hm = np.concatenate(test_hm, axis=0)
     test_outputs = np.concatenate(test_outputs, axis=0)
-    print('Test sequences shape: %s' % str(test_seq.shape))
     print('Test histones shape: %s' % str(test_hm.shape))
     print('Test outputs shape: %s' % str(test_outputs.shape))
 
     # Save data
     print('Saving Training and Test Data...')
-    save_tensors(train_seq, train_hm, train_outputs, 'train')
-    save_tensors(test_seq, test_hm, test_outputs, 'test')
+    save_tensors(train_hm, train_outputs, 'train')
+    save_tensors(test_hm, test_outputs, 'test')
     print('Saving Complete.')
 
 
@@ -143,24 +133,13 @@ if __name__ == '__main__':
     eval_hm = []
     for cell in eval_cells:
         cell_data = eval_data[cell]
-        seq_data, hm_data, _ = extract_data(cell_data, seq_labels, sequences)
-        eval_seq.append(seq_data)
+        hm_data, _ = extract_data(cell_data, seq_labels, sequences)
         eval_hm.append(hm_data)
 
-    eval_seq = np.concatenate(eval_seq, axis=0)
     eval_hm = np.concatenate(eval_hm, axis=0)
-    print('Submission sequences shape: %s' % str(eval_seq.shape))
     print('Submission histones shape: %s' % str(eval_hm.shape))
 
     # Save data
     print('Saving Submission Data...')
-    eval_hm = torch.from_numpy(eval_hm).permute(0, 2, 1)
-    if args.threshold > 0:
-        eval_hm[eval_hm < args.threshold] = 0
-    with torch.no_grad():
-        for i in range(args.smooth):
-            eval_hm = smooth(eval_hm)
-
-    torch.save(torch.from_numpy(eval_seq), args.destination + '/submission_seq.pt')
-    torch.save(eval_hm, args.destination + '/submission_hm.pt')
+    save_tensors(eval_hm, None, 'submission', augment=False)
     print('Saving Complete.')
