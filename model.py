@@ -18,9 +18,13 @@ class Model(nn.Module):
 
 
 class ConvBlock(nn.Module):
-    def __init__(self, *args, batch_norm=False, dropout=0, **kwargs):
+    def __init__(self, *args, batch_norm=False, dropout=0, deconv=False, activation='leaky_relu', **kwargs):
         super(ConvBlock, self).__init__()
-        self.conv = nn.Conv1d(*args, **kwargs)
+        self.activation = activation
+        if deconv:
+            self.conv = nn.ConvTranspose1d(*args, **kwargs)
+        else:
+            self.conv = nn.Conv1d(*args, **kwargs)
         self.dropout = nn.Dropout2d(dropout)
         if batch_norm:
             self.batch_norm = nn.BatchNorm1d(args[1])
@@ -28,55 +32,98 @@ class ConvBlock(nn.Module):
             self.batch_norm = False
 
     def forward(self, inputs):
+        x = self.conv(inputs)
         if self.batch_norm:
-            return F.leaky_relu(self.dropout(self.batch_norm(self.conv(inputs))))
-        else:
-            return F.leaky_relu(self.dropout(self.conv(inputs)))
+            x = self.batch_norm(x)
+        x = self.dropout(x)
+        if self.activation == 'leaky_relu':
+            x = F.leaky_relu(x)
+        elif self.activation == 'sigmoid':
+            x = F.sigmoid(x)
+        elif self.activation == 'softmax':
+            x = torch.softmax(x, dim=1)
+        return x
 
 
 class ConvolutionalModel(Model):
-    def __init__(self, norm_mean=0.0, norm_std=1.0, n_outs=1, in_size=15):
+    def __init__(self, norm_mean=0.0, norm_std=1.0, n_outs=1, in_size=15, activation=None):
         super(ConvolutionalModel, self).__init__(norm_mean, norm_std)
-        self.conv1   = ConvBlock(in_size, 64, 3, batch_norm=True, dropout=.2, stride=2)
-        self.conv2   = ConvBlock(64, 64, 3, batch_norm=True, dropout=.2, stride=1)
-        self.conv3   = ConvBlock(64, 128, 3, batch_norm=True, dropout=.2, stride=2)
-        self.conv4   = ConvBlock(128, 128, 3, batch_norm=True, dropout=.2, stride=1)
-        self.conv5   = ConvBlock(128, 256, 3, batch_norm=True, dropout=.2, stride=2)
-        self.conv6   = ConvBlock(256, 256, 3, batch_norm=True, dropout=.2, stride=1)
-        self.conv7   = ConvBlock(256, 512, 3, batch_norm=True, dropout=.2, stride=2)
-        self.conv8   = ConvBlock(512, 512, 3, batch_norm=True, dropout=.2, stride=1)
-        self.conv9   = ConvBlock(512, n_outs, 1)
+        self.conv = nn.ModuleList([
+            ConvBlock(in_size, 64, 3, batch_norm=True, dropout=.2, stride=1),
+            ConvBlock(64, 64, 3, batch_norm=True, dropout=.2, stride=2),
+            ConvBlock(64, 128, 3, batch_norm=True, dropout=.2, stride=1),
+            ConvBlock(128, 128, 3, batch_norm=True, dropout=.2, stride=2),
+            ConvBlock(128, 256, 3, batch_norm=True, dropout=.2, stride=1),
+            ConvBlock(256, 256, 3, batch_norm=True, dropout=.2, stride=2),
+            ConvBlock(256, 512, 3, batch_norm=True, dropout=.2, stride=1),
+            ConvBlock(512, 512, 3, batch_norm=True, dropout=.2, stride=2),
+            ConvBlock(512, 1024, 3, batch_norm=True, dropout=.2),
+            ConvBlock(1024, 1024, 1, batch_norm=True, dropout=.5),
+            ConvBlock(1024, n_outs, 1, activation=activation)
+        ])
 
     def forward(self, inputs, show=False, eval=False, use_classifier=False):
-        x0 = self.norm(inputs)
-        x1 = self.conv1(x0)
-        x2 = self.conv2(x1)
-        x3 = self.conv3(x2)
-        x4 = self.conv4(x3)
-        x5 = self.conv5(x4)
-        x6 = self.conv6(x5)
-        x7 = self.conv7(x6)
-        x8 = self.conv8(x7)
-        x9 = self.conv9(x8).view(inputs.size(0), -1)
+        x = [self.norm(inputs)]
+        for conv in self.conv:
+            x += [conv(x[-1])]
+        x[-1] = x[-1].view(inputs.size(0), -1)
         if show:
-            return x0, x1, x2, x3, x4, x5, x6, x7, x8, x9
+            return x
         else:
-            return x9
+            return x[-1]
+
+
+class SeqEncoder(Model):
+    def __init__(self, norm_mean=0.0, norm_std=1.0, n_outs=1, embed_size=8):
+        super(SeqEncoder, self).__init__(norm_mean, norm_std)
+        self.embed = nn.Embedding(num_embeddings=5, embedding_dim=embed_size)
+        self.feature_extractor = ConvBlock(embed_size, 64, 3, batch_norm=True, dropout=.2, stride=1)
+        self.conv1 = ConvBlock(64, 128, 5, batch_norm=True, dropout=.2, stride=3)
+        self.conv2 = ConvBlock(128, 256, 7, batch_norm=True, dropout=.2, stride=3)
+        self.conv3 = ConvBlock(256, 512, 9, batch_norm=True, dropout=.2, stride=3)
+        self.conv4 = ConvBlock(512, n_outs, 11, batch_norm=True, dropout=0, stride=3, activation='sigmoid')
+        self.conv_layers = [self.conv1, self.conv2, self.conv3, self.conv4]
+
+    def forward(self, inputs, n_layers=30):
+        if n_layers > len(self.conv_layers):
+            n_layers = len(self.conv_layers)
+        x = self.feature_extractor(self.embed(inputs).permute(0, 2, 1))
+        for i in range(n_layers):
+            x = self.conv_layers[i](x)
+        return x
+
+
+class SeqDecoder(Model):
+    def __init__(self, norm_mean=0.0, norm_std=1.0, in_size=15, embed_size=8):
+        super(SeqDecoder, self).__init__(norm_mean, norm_std)
+        self.conv1 = ConvBlock(in_size, 512, 11, batch_norm=True, dropout=.2, stride=3, deconv=True)
+        self.conv2 = ConvBlock(512, 256, 9, batch_norm=True, dropout=.2, stride=3, deconv=True, output_padding=1)
+        self.conv3 = ConvBlock(256, 128, 7, batch_norm=True, dropout=.2, stride=3, deconv=True, output_padding=1)
+        self.conv4 = ConvBlock(128, 64, 5, batch_norm=True, dropout=.2, stride=3, deconv=True, output_padding=2)
+        self.feature_detractor = ConvBlock(64, embed_size, 3, batch_norm=True, dropout=0, stride=1, deconv=True)
+        self.embed = ConvBlock(embed_size, 4, 1, batch_norm=True, dropout=0, stride=1, deconv=False, activation='softmax')
+        self.conv_layers = [self.conv1, self.conv2, self.conv3, self.conv4]
+
+    def forward(self, inputs, n_layers=30):
+        if n_layers > len(self.conv_layers):
+            n_layers = len(self.conv_layers)
+        x = inputs
+        for i in range(len(self.conv_layers)-n_layers, len(self.conv_layers)):
+            x = self.conv_layers[i](x)
+        x = self.embed(self.feature_detractor(x))
+        return x
 
 
 class SeqModel(nn.Module):
-    def __init__(self, n_outs=1, embed_size=32, seq_size=256, in_size=15):
-        self.embed = nn.Embedding(num_embeddings=5, embedding_dim=embed_size)
-        self.seq_module = ConvolutionalModel(n_outs=seq_size, in_size=embed_size)
-        self.prediction_module = ConvolutionalModel(n_outs=n_outs, in_size=in_size+seq_size)
+    def __init__(self, encode_size=256, embed_size=8):
+        super(SeqModel, self).__init__()
+        self.encoder = SeqEncoder(n_outs=encode_size, embed_size=embed_size)
+        self.decoder = SeqDecoder(in_size=encode_size, embed_size=embed_size)
 
-    def forward(self, inputs, show=False, eval=False, use_classifier=False):
-        seq_in, hm_in = inputs
-        seq_embed = self.embed(seq_in).permute(0, 2, 1)
-        seq_out = self.seq_module(seq_in).view(-1, self.seq_size, 100)
-        pred_in = torch.cat([seq_out, hm_in], dim=1)
-        pred_out = self.prediction_module(pred_in)
-        return pred_out
+    def forward(self, inputs, n_layers=30):
+        encoding = self.encoder(inputs, n_layers)
+        reconstruction = self.decoder(encoding, n_layers)
+        return reconstruction, encoding
 
 
 class EnsembleModel(nn.Module):
@@ -94,7 +141,7 @@ class EnsembleModel(nn.Module):
         shape = predictions[0].shape
         predictions = torch.cat([pred.view(shape[0], -1, 1) for pred in predictions], dim=2)
         if self.classifier is not None and use_classifier:
-            weights = F.softmax(self.classifier(inputs), dim=1).unsqueeze(1)
+            weights = self.classifier(inputs).unsqueeze(1)
             mean_prediction = torch.sum(predictions * weights, dim=2).view(shape)
         else:
             mean_prediction = torch.mean(predictions, dim=2).view(shape)
@@ -102,9 +149,9 @@ class EnsembleModel(nn.Module):
 
 
 class ClassificationModel(Model):
-    def __init__(self, norm_mean=0.0, norm_std=1.0, n_classes=48):
+    def __init__(self, norm_mean=0.0, norm_std=1.0, n_classes=48, in_size=15):
         super(ClassificationModel, self).__init__(norm_mean, norm_std)
-        self.conv_stack = ConvolutionalModel(norm_mean, norm_std, n_classes, 15)
+        self.conv_stack = ConvolutionalModel(norm_mean, norm_std, n_classes, in_size, activation='softmax')
 
     def forward(self, inputs, show=False, eval=False):
         activations = self.conv_stack(inputs, show)
@@ -113,21 +160,3 @@ class ClassificationModel(Model):
         else:
             activations = activations
         return activations
-
-
-class FactoredModel(Model):
-    def __init__(self, norm_mean=0.0, norm_std=1.0):
-        super(FactoredModel, self).__init__(norm_mean, norm_std)
-        self.conv_stack = ConvolutionalModel(norm_mean, norm_std, 2)
-
-    def forward(self, inputs, show=False, eval=False):
-        activations = self.conv_stack(inputs, show)
-        act = activations
-        if show:
-            act = activations[-1]
-        act = torch.stack([torch.relu(act[:, 0]), F.sigmoid(act[:, 1])], dim=1)
-        if eval:
-            act = act[:, 0] * (act[:, 1] * 2 - 1)
-        if show:
-            act = list(activations[:-1]) + [act]
-        return act

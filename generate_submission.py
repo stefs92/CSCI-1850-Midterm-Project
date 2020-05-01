@@ -3,6 +3,7 @@ import pandas as pd
 from info import eval_cells
 import argparse
 import torch
+from glob import glob
 #from train import *
 import numpy as np
 
@@ -34,15 +35,29 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    model = torch.load(args.model_path).cuda()
+    model = torch.load(args.model_path)[0].cuda()
     model.eval()
 
-    inputs = torch.load(args.data_path + '/submission_in.pt').cuda()
+    inputs = torch.load(args.data_path + '/submission_in.pt')
+    try:
+        seq_paths = glob(args.data_path+'/predicted_*.pt')
+        sequences = torch.load(seq_paths[0])
+        input_size = inputs.shape[1] + sequences.shape[1] - 1
+        seq_labels = torch.load(args.data_path + '/sequences.pt')[:,:1]
+    except Exception as e:
+        raise e
+        sequences = None
+        input_size = inputs.shape[1]
     num_batches = (inputs.size(0) // args.batch_size) + 1
 
     with torch.no_grad():
         for j in range(2):
-            predictions = [model(inputs[args.batch_size*i:args.batch_size*(i+1)], use_classifier=j).cpu().squeeze() for i in range(num_batches)]
+            predictions = []
+            for i in range(num_batches):
+                batch_inputs = inputs[args.batch_size*i:args.batch_size*(i+1)]
+                indices = np.nonzero(batch_inputs[:,0,0].numpy() == seq_labels.numpy())[0]
+                batch_inputs = torch.cat([batch_inputs[:,1:,:], sequences[indices]], dim=1).cuda()
+                predictions += [model(batch_inputs, use_classifier=j).cpu().squeeze()]
             predictions = torch.cat(predictions).numpy()
             model_name = args.model_path[args.model_path.find('/'):args.model_path.rfind('.')]
             submission_title = 'submissions/' + args.model_path[args.model_path.find('/')+1:args.model_path.rfind('/')]

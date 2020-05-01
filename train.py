@@ -16,13 +16,11 @@ from model import *
 from loss import *
 #from memory_profiler import profile
 
+region_size = 8300
 
 def get_sequences(labels, sequences):
-    print(labels.shape)
-    print(sequences[:,:1].shape)
     indices = np.nonzero(labels.numpy() == sequences[:, :1].numpy())[0]
-    print(indices.shape)
-    return sequences[indices, 1:]
+    return sequences[indices, 5001-region_size//2:5001+region_size//2].cuda()
 
 
 def save_model(model, opt, path):
@@ -39,6 +37,9 @@ def save_losses(losses, destination):
         old_losses = torch.zeros_like(losses).to(losses)
     indices = losses[:old_losses.size(0),:old_losses.size(1)] == 0
     losses[:old_losses.size(0),:old_losses.size(1)][indices] = old_losses[:,:][indices]
+    loss_len = torch.sum(torch.sum(losses[:,:,0] != 0, dim=0) != 0)
+    losses = losses[:,:loss_len]
+    old_losses = old_losses[:,:loss_len]
 
     plt.clf()
     if losses.shape[0] < 8:
@@ -65,23 +66,16 @@ def save_losses(losses, destination):
     return losses
 
 
-def build_models(args, inputs):
-    class_ = FactoredModel if args.factored_model else ConvolutionalModel
-    data_size = inputs.size(0)
-    partitions = partition_data(data_size, args.partitions)
+def build_models(args, input_size):
+    class_ = ConvolutionalModel
 
     if args.partitions > 1:
-        weightor = [ClassificationModel(n_classes=args.partitions)]#inputs.mean(dim=0), inputs.std(dim=0), args.partitions).cuda()]
+        weightor = [ClassificationModel(in_size=input_size, n_classes=args.partitions)]
     else:
         weightor = []
     predictors = []
-    for partition in partitions:
-        train_inputs = None
-        if args.partition_training:
-            train_inputs = inputs[partition[1]]
-        else:
-            train_inputs = torch.cat([inputs[partition[0]], inputs[partition[2]]], dim=0)
-        predictors += [class_()]#train_inputs.mean(dim=0), train_inputs.std(dim=0)).cuda()]
+    for partition in range(args.partitions):
+        predictors += [class_(in_size=input_size, activation=None)]
     return predictors + weightor
 
 
@@ -225,18 +219,10 @@ def train_model(model, inputs, outputs, partition, loss_f, eval_f, opt, epochs, 
             # Batch training data
             for i_batch, batch in enumerate(train_loader):
                 batch_inputs, batch_outputs = batch
-                batch_inputs = (get_sequences(batch_inputs[:,0,0], args.sequences), batch_inputs.cuda())
+                #indices = np.nonzero(batch_inputs[:,0,0].numpy() == args.sequences[0].numpy())[0]
+                #batch_inputs = torch.cat([batch_inputs[:,1:,:], args.sequences[1][indices]], dim=1).cuda()
+                batch_inputs = batch_inputs[:,1:,:].cuda()
                 batch_outputs = batch_outputs.cuda()
-                '''
-                # Build batches
-                batch_indices = slice(i_batch*args.batch_size, (i_batch+1)*args.batch_size)
-                batch_inputs = train_inputs[i_shuffle[batch_indices]].cuda()
-                batch_outputs = train_outputs[i_shuffle[batch_indices]].cuda()
-                '''
-
-                # If the last batch is size 0, just skip it
-                if batch_outputs.size(0) == 0:
-                    continue
 
                 # Perform gradient update on batch
                 batch_losses = step(model, batch_inputs, batch_outputs, loss_f, opt)
@@ -255,7 +241,9 @@ def train_model(model, inputs, outputs, partition, loss_f, eval_f, opt, epochs, 
             for i_batch in range(n_batches_eval):
                 batch_indices = slice(i_batch*args.batch_size,(i_batch+1)*args.batch_size)
                 batch_inputs = eval_inputs[i_shuffle[batch_indices]]
-                batch_inputs = (get_sequences(batch_inputs[:,0,0], args.sequences), batch_inputs.cuda())
+                #indices = np.nonzero(batch_inputs[:,0,0].numpy() == args.sequences[0].numpy())[0]
+                #batch_inputs = torch.cat([batch_inputs[:,1:,:], args.sequences[1][indices]], dim=1).cuda()
+                batch_inputs = batch_inputs[:,1:,:].cuda()
                 batch_outputs = eval_outputs[i_shuffle[batch_indices]].cuda()
 
                 # Same reasoning as training: sometimes encounter 0-size batches
@@ -276,7 +264,9 @@ def train_model(model, inputs, outputs, partition, loss_f, eval_f, opt, epochs, 
             for i_batch in range(n_batches_trainval):
                 batch_indices = slice(i_batch*args.batch_size,(i_batch+1)*args.batch_size)
                 batch_inputs = trainval_inputs[i_shuffle[batch_indices]]
-                batch_inputs = (get_sequences(batch_inputs[:,0,0], args.sequences), batch_inputs.cuda())
+                #indices = np.nonzero(batch_inputs[:,0,0].numpy() == args.sequences[0].numpy())[0]
+                #batch_inputs = torch.cat([batch_inputs[:,1:,:], args.sequences[1][indices]], dim=1).cuda()
+                batch_inputs = batch_inputs[:,1:,:].cuda()
                 batch_outputs = trainval_outputs[i_shuffle[batch_indices]].cuda()
 
                 # Same reasoning as training: sometimes encounter 0-size batches
@@ -304,6 +294,7 @@ def train_model(model, inputs, outputs, partition, loss_f, eval_f, opt, epochs, 
         return model.cpu(), losses.cpu()
     except (Exception, KeyboardInterrupt) as e:
         save_model(model, opt, model_path + '_%d.ptm' % i_epoch)
+        #raise e
         return e, losses.cpu()
 
 
@@ -312,8 +303,6 @@ def train(models, inputs, outputs, test_inputs, test_outputs, epochs, args):
     # potentially more flexible evaluation metrics
     loss_f = nn.MSELoss(reduction='none')
     eval_f = nn.MSELoss(reduction='sum')
-    if args.factored_model:
-        loss_f = FactoredLoss(reduction=False)
 
     if args.partitions > 1:
         print('Training an ensemble model via %d-fold cross-validation.' % args.partitions)
@@ -474,7 +463,6 @@ if __name__ == '__main__':
     parser.add_argument('-epochs', type=int, default=0, help='Number of epochs to train for.')
     parser.add_argument('-learning_rate', type=float, default=0, help='Learning rate.')
     parser.add_argument('-save_rate', type=int, default=100, help='Save model and loss curves every ___ epochs.')
-    parser.add_argument('-factored_model', default=False, action='store_true', dest='factored_model', help='Flag to use factored regression model.')
     parser.add_argument('-partition_training', default=False, action='store_true', dest='partition_training', help='Flag to train on the partition rather than eval on it.')
     parser.add_argument('-sequences', help='Placeholder, please ignore.')
 
@@ -498,7 +486,7 @@ if __name__ == '__main__':
     except:
         # True Defaults
         if epochs == 0:
-            args.epochs = 25
+            args.epochs = 1000
         if batch_size == 0:
             args.batch_size = 256
         if batch_size_annealing < 0:
@@ -513,21 +501,25 @@ if __name__ == '__main__':
     if args.save_rate > args.epochs:
         args.save_rate = args.epochs
 
-    try:
-        args = pickle.load(open(args.model_path + '/args.pkl', 'rb'))
-    except:
-        pass
-
     # Load dataset
     print('Loading data...')
     train_inputs = torch.load(args.data_path + '/train_in.pt')
     train_outputs = torch.load(args.data_path + '/train_out.pt')
     test_inputs = torch.load(args.data_path + '/test_in.pt')
     test_outputs = torch.load(args.data_path + '/test_out.pt')
+    try:
+        seq_paths = glob(args.data_path+'/predicted_*.pt')
+        sequences = torch.load(seq_paths[0])
+        input_size = train_inputs.shape[1] + sequences.shape[1] - 1
+        seq_labels = torch.load(args.data_path + '/sequences.pt')[:,:1]
+        sequences = (seq_labels, sequences)
+    except Exception as e:
+        sequences = None
+        input_size = train_inputs.shape[1] - 1
     print('Data loaded.')
 
     # Load or create model
-    models = build_models(args, train_inputs)
+    models = build_models(args, input_size)
     epochs = [0]*len(models)
     if args.partitions == 1:
         epochs[0], model = load_model(args.model_path + '/model_*.ptm')
@@ -553,7 +545,8 @@ if __name__ == '__main__':
     pickle.dump(args, open(args.model_path + '/args.pkl', 'wb'))
 
     # Load sequences only after all of the args stuff is done
-    args.sequences = torch.load(args.data_path + '/sequences.pt')
+    #args.sequences = torch.load(args.data_path + '/sequences.pt')
+    args.sequences = sequences
 
     print('Data and Model loaded, beginning training...')
 
