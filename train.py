@@ -75,7 +75,7 @@ def build_models(args, input_size):
         weightor = []
     predictors = []
     for partition in range(args.partitions):
-        predictors += [class_(in_size=input_size, activation=None)]
+        predictors += [class_(in_size=input_size, activation=None)]#[MixModel()]#
     return predictors + weightor
 
 
@@ -89,14 +89,14 @@ def partition_data(dsize, n_partitions):
 
 def shuffle_data(*tensors):
     i_shuffle = torch.randperm(tensors[0].size(0))
-    return i_shuffle#[tensors[i][i_shuffle] for i in range(len(tensors))]
+    return i_shuffle
 
 '''
 Performs a single gradient update and returns losses
 '''
 def step(model, inputs, outputs, loss_f, opt):
     opt.zero_grad()
-    predictions = model(inputs)#torch.sigmoid(model(inputs))#
+    predictions = model(inputs)#[0], inputs[1])
     loss = loss_f(predictions.squeeze(), outputs.squeeze())
     torch.mean(loss).backward()
     opt.step()
@@ -219,13 +219,15 @@ def train_model(model, inputs, outputs, partition, loss_f, eval_f, opt, epochs, 
             # Batch training data
             for i_batch, batch in enumerate(train_loader):
                 batch_inputs, batch_outputs = batch
-                #indices = np.nonzero(batch_inputs[:,0,0].numpy() == args.sequences[0].numpy())[0]
-                #batch_inputs = torch.cat([batch_inputs[:,1:,:], args.sequences[1][indices]], dim=1).cuda()
-                batch_inputs = batch_inputs[:,1:,:].cuda()
+                indices = torch.cat([torch.from_numpy(np.nonzero(args.sequences[0] == batch_inputs[i,0,0].numpy())[0]) for i in range(batch_inputs.shape[0])])
+                #seq_inputs = args.sequences[1][indices].cuda()
+                batch_inputs = torch.cat([batch_inputs[:,1:,:], args.sequences[1][indices]], dim=1).cuda()
+                #batch_inputs = batch_inputs[:,1:,:].cuda()
                 batch_outputs = batch_outputs.cuda()
 
                 # Perform gradient update on batch
                 batch_losses = step(model, batch_inputs, batch_outputs, loss_f, opt)
+                #batch_losses = step(model, (batch_inputs, seq_inputs), batch_outputs, loss_f, opt)
                 train_losses += torch.sum(batch_losses).detach().cpu().item()
             train_losses = train_losses / train_inputs.size(0)
 
@@ -241,9 +243,10 @@ def train_model(model, inputs, outputs, partition, loss_f, eval_f, opt, epochs, 
             for i_batch in range(n_batches_eval):
                 batch_indices = slice(i_batch*args.batch_size,(i_batch+1)*args.batch_size)
                 batch_inputs = eval_inputs[i_shuffle[batch_indices]]
-                #indices = np.nonzero(batch_inputs[:,0,0].numpy() == args.sequences[0].numpy())[0]
-                #batch_inputs = torch.cat([batch_inputs[:,1:,:], args.sequences[1][indices]], dim=1).cuda()
-                batch_inputs = batch_inputs[:,1:,:].cuda()
+                indices = torch.cat([torch.from_numpy(np.nonzero(args.sequences[0] == batch_inputs[i,0,0].numpy())[0]) for i in range(batch_inputs.shape[0])])
+                #seq_inputs = args.sequences[1][indices].cuda()
+                batch_inputs = torch.cat([batch_inputs[:,1:,:], args.sequences[1][indices]], dim=1).cuda()
+                #batch_inputs = batch_inputs[:,1:,:].cuda()
                 batch_outputs = eval_outputs[i_shuffle[batch_indices]].cuda()
 
                 # Same reasoning as training: sometimes encounter 0-size batches
@@ -253,7 +256,8 @@ def train_model(model, inputs, outputs, partition, loss_f, eval_f, opt, epochs, 
                 # Don't need to track operations/gradients for evaluation
                 with torch.no_grad():
                     # Build a sum of evaluation losses to average over later
-                    predictions = model(batch_inputs, eval=True).squeeze()#torch.sigmoid(model(batch_inputs, eval=True).squeeze())
+                    predictions = model(batch_inputs, eval=True).squeeze()
+                    #predictions = model(batch_inputs, seq_inputs, eval=True).squeeze()#torch.sigmoid(model(batch_inputs, eval=True).squeeze())
                     sum_loss += eval_f(predictions.squeeze(), batch_outputs.squeeze()).item()
 
             n_batches_trainval = min((trainval_inputs.size(0) // args.batch_size), 10)
@@ -264,9 +268,10 @@ def train_model(model, inputs, outputs, partition, loss_f, eval_f, opt, epochs, 
             for i_batch in range(n_batches_trainval):
                 batch_indices = slice(i_batch*args.batch_size,(i_batch+1)*args.batch_size)
                 batch_inputs = trainval_inputs[i_shuffle[batch_indices]]
-                #indices = np.nonzero(batch_inputs[:,0,0].numpy() == args.sequences[0].numpy())[0]
-                #batch_inputs = torch.cat([batch_inputs[:,1:,:], args.sequences[1][indices]], dim=1).cuda()
-                batch_inputs = batch_inputs[:,1:,:].cuda()
+                indices = torch.cat([torch.from_numpy(np.nonzero(args.sequences[0] == batch_inputs[i,0,0].numpy())[0]) for i in range(batch_inputs.shape[0])])
+                #seq_inputs = args.sequences[1][indices].cuda()
+                batch_inputs = torch.cat([batch_inputs[:,1:,:], args.sequences[1][indices]], dim=1).cuda()
+                #batch_inputs = batch_inputs[:,1:,:].cuda()
                 batch_outputs = trainval_outputs[i_shuffle[batch_indices]].cuda()
 
                 # Same reasoning as training: sometimes encounter 0-size batches
@@ -276,7 +281,8 @@ def train_model(model, inputs, outputs, partition, loss_f, eval_f, opt, epochs, 
                 # Don't need to track operations/gradients for evaluation
                 with torch.no_grad():
                     # Build a sum of evaluation losses to average over later
-                    predictions = model(batch_inputs, eval=True).squeeze()#torch.sigmoid(model(batch_inputs, eval=True).squeeze())
+                    predictions = model(batch_inputs, eval=True).squeeze()
+                    #predictions = model(batch_inputs, seq_inputs, eval=True).squeeze()#torch.sigmoid(model(batch_inputs, eval=True).squeeze())
                     sum_loss2 += eval_f(predictions.squeeze(), batch_outputs.squeeze()).item()
 
             # Calculate and print mean train and eval loss over the epoch
@@ -375,12 +381,19 @@ def cross_validation(models, inputs, outputs, test_inputs, test_outputs, loss_f,
         # Batch the eval data
         for i_batch in range(n_batches):
             inds = slice(i_batch*args.batch_size, (i_batch+1)*args.batch_size)
-            batch_inputs = train_inputs[inds].cuda()
+            batch_inputs = train_inputs[inds]
+
+            if batch_inputs.size(0) == 0:
+                continue
+
+            indices = torch.cat([torch.from_numpy(np.nonzero(args.sequences[0] == batch_inputs[i,0,0].numpy())[0]) for i in range(batch_inputs.shape[0])])
+            #seq_inputs = args.sequences[1][indices].cuda()
+            batch_inputs = torch.cat([batch_inputs[:,1:,:], args.sequences[1][indices]], dim=1).cuda()
             batch_outputs = true_outputs[inds].cuda()
 
             # Same reasoning as training: sometimes encounter 0-size batches
-            if batch_inputs.size(0) == 0:
-                continue
+            #if batch_inputs.size(0) == 0:
+            #    continue
 
             # Build a sum of evaluation losses to average over later
             train_outputs[inds] = torch.stack([loss_f(model(batch_inputs, eval=True).view(-1), batch_outputs.view(-1)) for model in fold_models[:-1]], dim=1)
@@ -508,10 +521,16 @@ if __name__ == '__main__':
     test_inputs = torch.load(args.data_path + '/test_in.pt')
     test_outputs = torch.load(args.data_path + '/test_out.pt')
     try:
+        '''
         seq_paths = glob(args.data_path+'/predicted_*.pt')
         sequences = torch.load(seq_paths[0])
         input_size = train_inputs.shape[1] + sequences.shape[1] - 1
         seq_labels = torch.load(args.data_path + '/sequences.pt')[:,:1]
+        sequences = (seq_labels, sequences)
+        '''
+        sequences = torch.load(args.data_path+'/sequences.pt').permute(0, 2, 1)
+        input_size = train_inputs.shape[1] + sequences.shape[1] - 1
+        seq_labels = torch.load(args.data_path + '/sequence_labels.pt').long().numpy()
         sequences = (seq_labels, sequences)
     except Exception as e:
         sequences = None
@@ -546,6 +565,7 @@ if __name__ == '__main__':
 
     # Load sequences only after all of the args stuff is done
     #args.sequences = torch.load(args.data_path + '/sequences.pt')
+    #args.sequences = (args.sequences[:,:1], args.sequences[:,1:])
     args.sequences = sequences
 
     print('Data and Model loaded, beginning training...')

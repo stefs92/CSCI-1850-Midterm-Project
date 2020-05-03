@@ -40,14 +40,14 @@ if __name__ == '__main__':
 
     inputs = torch.load(args.data_path + '/submission_in.pt')
     try:
-        seq_paths = glob(args.data_path+'/predicted_*.pt')
-        sequences = torch.load(seq_paths[0])
+        sequences = torch.load(args.data_path+'/sequences.pt').permute(0, 2, 1)
         input_size = inputs.shape[1] + sequences.shape[1] - 1
-        seq_labels = torch.load(args.data_path + '/sequences.pt')[:,:1]
+        seq_labels = torch.load(args.data_path + '/sequence_labels.pt').long().numpy()
+        sequences = (seq_labels, sequences)
     except Exception as e:
         raise e
         sequences = None
-        input_size = inputs.shape[1]
+        input_size = inputs.shape[1] - 1
     num_batches = (inputs.size(0) // args.batch_size) + 1
 
     with torch.no_grad():
@@ -55,8 +55,8 @@ if __name__ == '__main__':
             predictions = []
             for i in range(num_batches):
                 batch_inputs = inputs[args.batch_size*i:args.batch_size*(i+1)]
-                indices = np.nonzero(batch_inputs[:,0,0].numpy() == seq_labels.numpy())[0]
-                batch_inputs = torch.cat([batch_inputs[:,1:,:], sequences[indices]], dim=1).cuda()
+                indices = torch.cat([torch.from_numpy(np.nonzero(sequences[0] == batch_inputs[i,0,0].numpy())[0]) for i in range(batch_inputs.shape[0])])
+                batch_inputs = torch.cat([batch_inputs[:,1:,:], sequences[1][indices]], dim=1).cuda()
                 predictions += [model(batch_inputs, use_classifier=j).cpu().squeeze()]
             predictions = torch.cat(predictions).numpy()
             model_name = args.model_path[args.model_path.find('/'):args.model_path.rfind('.')]

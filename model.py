@@ -49,9 +49,9 @@ class ConvolutionalModel(Model):
     def __init__(self, norm_mean=0.0, norm_std=1.0, n_outs=1, in_size=15, activation=None):
         super(ConvolutionalModel, self).__init__(norm_mean, norm_std)
         self.conv = nn.ModuleList([
-            ConvBlock(in_size, 64, 3, batch_norm=True, dropout=.2, stride=1),
-            ConvBlock(64, 64, 3, batch_norm=True, dropout=.2, stride=2),
-            ConvBlock(64, 128, 3, batch_norm=True, dropout=.2, stride=1),
+            ConvBlock(in_size, 256, 3, batch_norm=True, dropout=.2, stride=1),
+            ConvBlock(256, 256, 3, batch_norm=True, dropout=.2, stride=2),
+            ConvBlock(256, 128, 3, batch_norm=True, dropout=.2, stride=1),
             ConvBlock(128, 128, 3, batch_norm=True, dropout=.2, stride=2),
             ConvBlock(128, 256, 3, batch_norm=True, dropout=.2, stride=1),
             ConvBlock(256, 256, 3, batch_norm=True, dropout=.2, stride=2),
@@ -71,6 +71,23 @@ class ConvolutionalModel(Model):
             return x
         else:
             return x[-1]
+
+
+class MixModel(Model):
+    def __init__(self, sequence_channels=256, rnn_layers=1, embed_size=16):
+        super(MixModel, self).__init__()
+        self.conv = ConvolutionalModel(in_size=15+sequence_channels*2)
+        self.rnn = nn.GRU(input_size=embed_size, hidden_size=sequence_channels, num_layers=rnn_layers, batch_first=True, bidirectional=True)
+        self.embed = nn.Embedding(num_embeddings=5, embedding_dim=embed_size)
+
+    def forward(self, histones, sequences, eval=False):
+        x = self.embed(sequences)
+        x = self.rnn(x)
+        x = x[0]
+        x = x[:,50::100]
+        x = x.permute(0, 2, 1)
+        x = self.conv(torch.cat([histones, x], dim=1))
+        return x
 
 
 class SeqEncoder(Model):
