@@ -35,8 +35,10 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    model = torch.load(args.model_path)[0].cuda()
-    model.eval()
+    model = torch.load(args.model_path)
+    if isinstance(model, tuple):
+        model = model[0]
+    model.cuda().eval()
 
     inputs = torch.load(args.data_path + '/submission_in.pt')
     try:

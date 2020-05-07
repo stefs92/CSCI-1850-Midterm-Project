@@ -85,12 +85,12 @@ def process_sequences(sequences, motif_length, window_size, stride):
 def save_tensors(hm, out, name, augment=True):
     hm = torch.from_numpy(hm).permute(0, 2, 1)
     if args.threshold > 0:
-        hm[hm < args.threshold] = 0
+        hm[:,1:][hm[:,1:] < args.threshold] = 0
     if args.noise > 0 and augment:
-        hm = hm + torch.randn_like(hm) * args.noise
+        hm[:,1:] = hm[:,1:] + torch.randn_like(hm[:,1:]) * args.noise
     with torch.no_grad():
         for i in range(args.smooth):
-            hm = smooth(hm)
+            hm[:,1:] = smooth(hm[:,1:])
 
     torch.save(hm, args.destination + '/%s_in.pt' % name)
     if out is not None:
@@ -136,7 +136,7 @@ if __name__ == '__main__':
 
     # Prep smoothing "function"
     k = 3
-    smooth = torch.nn.Conv1d(5, 5, k, padding=((k-1)//2))
+    smooth = torch.nn.Conv1d(15, 15, k, padding=((k-1)//2))
     smooth.bias[:] = 0
     for i in range(5):
         smooth.weight[i] = torch.zeros_like(smooth.weight[i])
@@ -192,7 +192,7 @@ if __name__ == '__main__':
     # Save data
     print('Saving Training and Test Data...')
     save_tensors(train_hm, train_outputs, 'train')
-    save_tensors(test_hm, test_outputs, 'test')
+    save_tensors(test_hm, test_outputs, 'test', augment=False)
     print('Saving Complete.')
 
 
